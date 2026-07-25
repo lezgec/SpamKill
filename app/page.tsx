@@ -229,7 +229,7 @@ export default function Home() {
 
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
 
-  const loadHistory = async () => {
+  const loadHistory = async (refresh = false) => {
     if (provider !== "gmail") {
       setHistory([]);
       setView("history");
@@ -239,6 +239,13 @@ export default function Home() {
     setHistoryLoading(true);
     setError("");
     try {
+      if (refresh) {
+        const scanResponse = await fetch("/api/google/scan");
+        if (!scanResponse.ok) {
+          const scanData = await scanResponse.json() as { error?: string };
+          throw new Error(scanData.error ?? "No se pudo comprobar el correo reciente.");
+        }
+      }
       const response = await fetch("/api/google/history");
       const data = await response.json() as { history?: HistoryRecord[]; error?: string };
       if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el historial.");
@@ -333,7 +340,7 @@ export default function Home() {
         </div>
         <nav className="side-nav">
           <button className={view === "cleanup" ? "active" : ""} onClick={() => setView("cleanup")}><Icon name="spark" /> Limpieza inteligente <b>{senders.length}</b></button>
-          <button className={view === "history" ? "active" : ""} onClick={loadHistory}><Icon name="history" /> Historial</button>
+          <button className={view === "history" ? "active" : ""} onClick={() => loadHistory(false)}><Icon name="history" /> Historial</button>
           <button><Icon name="settings" /> Configuración</button>
         </nav>
         <div className="privacy-note">
@@ -345,7 +352,7 @@ export default function Home() {
       </aside>
 
       {view === "history" ? (
-        <HistoryView records={history} loading={historyLoading} onRefresh={loadHistory} />
+        <HistoryView records={history} loading={historyLoading} onRefresh={() => loadHistory(true)} />
       ) : (
       <main className="dashboard">
         <header className="dash-header">
