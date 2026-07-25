@@ -9,7 +9,7 @@ import { getDb } from "@/db";
 import { unsubscribeHistory } from "@/db/schema";
 
 type ActionPayload = {
-  action?: "unsubscribe" | "unsubscribe_and_trash";
+  action?: "unsubscribe" | "unsubscribe_and_trash" | "trash";
   range?: ScanRange;
   after?: string;
   before?: string;
@@ -18,6 +18,7 @@ type ActionPayload = {
     name?: string;
     domain?: string;
     primaryMessageId?: string;
+    messageIds?: string[];
   }>;
 };
 
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
   for (const group of groups) {
     let groupUnsubscribed = false;
     let groupManual = false;
-    if (group.primaryMessageId) {
+    if (payload.action !== "trash" && group.primaryMessageId) {
       const metadataUrl = new URL(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(group.primaryMessageId)}`,
       );
@@ -113,7 +114,10 @@ export async function POST(request: Request) {
     }
 
     let groupTrashed = 0;
-    if (payload.action === "unsubscribe_and_trash" && group.id) {
+    if (
+      (payload.action === "unsubscribe_and_trash" || payload.action === "trash") &&
+      group.id
+    ) {
       let query: string;
       try {
         query = buildMailboxQuery({
@@ -129,7 +133,12 @@ export async function POST(request: Request) {
           setCookie,
         );
       }
-      const messageIds = await findMessageIds(session.accessToken, query);
+      const requestedIds = (group.messageIds ?? []).filter(
+        (id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]+$/.test(id),
+      );
+      const messageIds = requestedIds.length
+        ? [...new Set(requestedIds)].slice(0, 5000)
+        : await findMessageIds(session.accessToken, query);
       for (let index = 0; index < messageIds.length; index += 1000) {
         const ids = messageIds.slice(index, index + 1000);
         const response = await fetch(
@@ -151,7 +160,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (group.id && group.name && group.domain) {
+    if (payload.action !== "trash" && group.id && group.name && group.domain) {
       const now = Date.now();
       const record = {
         id: `${session.email}:${group.id}`,

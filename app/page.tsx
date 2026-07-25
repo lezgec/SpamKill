@@ -29,6 +29,14 @@ type HistoryRecord = {
   lastSeenAt: number | null;
   messagesTrashed: number;
 };
+type DetailMessage = {
+  id: string;
+  subject: string;
+  snippet: string;
+  from: string;
+  receivedAt: number;
+  hasUnsubscribe: boolean;
+};
 
 const providers = {
   gmail: { name: "Gmail", email: "Cuenta de Google", mark: "M", tone: "gmail" },
@@ -92,6 +100,16 @@ function mergeSenderPages(current: Sender[], incoming: Sender[]): Sender[] {
     }
   }
   return [...grouped.values()].sort((a, b) => b.count - a.count);
+}
+
+function pause(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(resolve, milliseconds);
+    signal.addEventListener("abort", () => {
+      window.clearTimeout(timeout);
+      reject(new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
 }
 
 function HistoryView({
@@ -175,10 +193,18 @@ export default function Home() {
   const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [scanRange, setScanRange] = useState<ScanRange>("all");
+  const [scanRange, setScanRange] = useState<ScanRange>("90d");
   const [customOpen, setCustomOpen] = useState(false);
   const [customAfter, setCustomAfter] = useState("");
   const [customBefore, setCustomBefore] = useState("");
+  const [quotaWait, setQuotaWait] = useState(0);
+  const [detailSender, setDetailSender] = useState<Sender | null>(null);
+  const [detailMessages, setDetailMessages] = useState<DetailMessage[]>([]);
+  const [detailSelected, setDetailSelected] = useState<string[]>([]);
+  const [detailPageToken, setDetailPageToken] = useState<string | null>(null);
+  const [detailEstimate, setDetailEstimate] = useState(0);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
   const scanAbortRef = useRef<AbortController | null>(null);
 
   const showNotice = (message: string) => {
@@ -213,15 +239,28 @@ export default function Home() {
         if (after) url.searchParams.set("after", after);
         if (before) url.searchParams.set("before", before);
         if (pageToken) url.searchParams.set("pageToken", pageToken);
-        const response = await fetch(url, { signal: controller.signal });
-        const data = await response.json() as {
+        let response: Response;
+        let data: {
           groups?: Sender[];
           email?: string;
           scanned?: number;
           nextPageToken?: string | null;
           resultSizeEstimate?: number;
+          retryAfter?: number;
           error?: string;
         };
+        while (true) {
+          response = await fetch(url, { signal: controller.signal });
+          data = await response.json() as typeof data;
+          if (response.status !== 429) break;
+          let seconds = data.retryAfter ?? 60;
+          while (seconds > 0) {
+            setQuotaWait(seconds);
+            await pause(1000, controller.signal);
+            seconds -= 1;
+          }
+          setQuotaWait(0);
+        }
         if (!response.ok) throw new Error(data.error ?? "No se pudo analizar Gmail.");
         accumulated = mergeSenderPages(accumulated, data.groups ?? []);
         totalScanned += data.scanned ?? 0;
@@ -230,6 +269,7 @@ export default function Home() {
         setGmailEmail(data.email ?? "");
         setScanned(totalScanned);
         setEstimate(data.resultSizeEstimate ?? totalScanned);
+        if (pageToken) await pause(5000, controller.signal);
       } while (pageToken && !controller.signal.aborted);
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
@@ -237,6 +277,7 @@ export default function Home() {
     } finally {
       if (scanAbortRef.current === controller) {
         setLoading(false);
+        setQuotaWait(0);
         scanAbortRef.current = null;
       }
     }
@@ -250,7 +291,7 @@ export default function Home() {
 
   useEffect(() => {
     if (provider !== "gmail") return;
-    runScan("all");
+    runScan("90d");
     return () => scanAbortRef.current?.abort();
   }, [provider, runScan]);
 
@@ -301,6 +342,109 @@ export default function Home() {
   };
 
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+
+  const loadSenderMessages = async (
+    sender: Sender,
+    pageToken: string | null = null,
+    append = false,
+  ) => {
+    setDetailLoading(true);
+    setDetailError("");
+    try {
+      const url = new URL("/api/google/messages", window.location.origin);
+      url.searchParams.set("sender", sender.id);
+      url.searchParams.set("range", scanRange);
+      if (customAfter) url.searchParams.set("after", customAfter);
+      if (customBefore) url.searchParams.set("before", customBefore);
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const response = await fetch(url);
+      const data = await response.json() as {
+        messages?: DetailMessage[];
+        nextPageToken?: string | null;
+        resultSizeEstimate?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error ?? "No se pudieron cargar los correos.");
+      setDetailMessages((current) => append ? [...current, ...(data.messages ?? [])] : (data.messages ?? []));
+      setDetailPageToken(data.nextPageToken ?? null);
+      setDetailEstimate(data.resultSizeEstimate ?? data.messages?.length ?? 0);
+    } catch (reason) {
+      setDetailError(reason instanceof Error ? reason.message : "No se pudieron cargar los correos.");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const openSender = (sender: Sender) => {
+    if (loading || provider !== "gmail") return;
+    setDetailSender(sender);
+    setDetailMessages([]);
+    setDetailSelected([]);
+    setDetailPageToken(null);
+    setDetailEstimate(0);
+    loadSenderMessages(sender);
+  };
+
+  const toggleDetail = (id: string) => {
+    setDetailSelected((current) => current.includes(id)
+      ? current.filter((item) => item !== id)
+      : [...current, id]);
+  };
+
+  const actDetail = async (action: "unsubscribe" | "trash") => {
+    if (!detailSender || busy) return;
+    if (action === "trash" && !detailSelected.length) {
+      setDetailError("Selecciona al menos un correo.");
+      return;
+    }
+    setBusy(true);
+    setDetailError("");
+    try {
+      const response = await fetch("/api/google/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          range: scanRange,
+          after: customAfter,
+          before: customBefore,
+          groups: [{
+            id: detailSender.id,
+            name: detailSender.name,
+            domain: detailSender.domain,
+            primaryMessageId: detailSender.primaryMessageId,
+            messageIds: action === "trash" ? detailSelected : undefined,
+          }],
+        }),
+      });
+      const data = await response.json() as {
+        unsubscribed?: number;
+        manual?: number;
+        trashed?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
+      if (action === "trash") {
+        const removed = new Set(detailSelected);
+        setDetailMessages((current) => current.filter((message) => !removed.has(message.id)));
+        setSenders((current) => current
+          .map((sender) => sender.id === detailSender.id
+            ? { ...sender, count: Math.max(0, sender.count - detailSelected.length) }
+            : sender)
+          .filter((sender) => sender.count > 0));
+        showNotice(`${data.trashed ?? 0} correos seleccionados enviados a la papelera.`);
+        setDetailSelected([]);
+      } else {
+        showNotice(data.unsubscribed
+          ? "El remitente aceptó la solicitud de desuscripción."
+          : "La desuscripción requiere revisión manual.");
+      }
+    } catch (reason) {
+      setDetailError(reason instanceof Error ? reason.message : "No se pudo completar la acción.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const loadHistory = async (refresh = false) => {
     if (provider !== "gmail") {
@@ -476,6 +620,7 @@ export default function Home() {
           {loading && (
             <div className="scan-progress">
               <span><i style={{ width: estimate ? `${Math.min(100, Math.round((scanned / estimate) * 100))}%` : "12%" }} /></span>
+              <small>{quotaWait ? `Gmail pidió una pausa: reintentando en ${quotaWait}s` : "Análisis pausado entre páginas para proteger la cuota"}</small>
               <button onClick={() => scanAbortRef.current?.abort()}>Detener análisis</button>
             </div>
           )}
@@ -498,13 +643,19 @@ export default function Home() {
             {loading && <div className="loading-state"><span className="loader" /> Analizando {rangeLabels[scanRange].toLowerCase()}...</div>}
             {!loading && rows.length === 0 && <div className="empty-state">No encontramos remitentes con estos filtros.</div>}
             {!loading && rows.map((sender) => (
-              <label className={`sender-row ${selected.includes(sender.id) ? "selected" : ""}`} key={sender.id}>
-                <span className="sender-main"><input type="checkbox" checked={selected.includes(sender.id)} onChange={() => toggle(sender.id)} /><i style={{ background: sender.color }}>{sender.initials}</i><span><strong>{sender.name}</strong><small>{sender.domain}</small></span></span>
+              <div className={`sender-row ${selected.includes(sender.id) ? "selected" : ""}`} key={sender.id}>
+                <span className="sender-main">
+                  <input aria-label={`Seleccionar ${sender.name}`} type="checkbox" checked={selected.includes(sender.id)} onChange={() => toggle(sender.id)} />
+                  <button className="sender-open" onClick={() => openSender(sender)}>
+                    <i style={{ background: sender.color }}>{sender.initials}</i>
+                    <span><strong>{sender.name}</strong><small>{sender.domain} · Ver correos</small></span>
+                  </button>
+                </span>
                 <span><b className={`tag ${sender.category.toLowerCase()}`}>{sender.category}</b></span>
                 <strong className="message-count">{sender.count}</strong>
                 <span className="last-date">{sender.last}</span>
                 <span className={sender.unsub ? "available" : "manual"}>{sender.unsub ? "✓ Disponible" : "Manual"}</span>
-              </label>
+              </div>
             ))}
           </div>
 
@@ -518,6 +669,56 @@ export default function Home() {
         </section>
         <p className="footer-copy">SpamKill nunca elimina mensajes de forma permanente sin tu confirmación.</p>
       </main>
+      )}
+      {detailSender && (
+        <div className="drawer-backdrop" onMouseDown={() => setDetailSender(null)}>
+          <aside className="sender-drawer" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="drawer-header">
+              <div>
+                <span className="drawer-avatar" style={{ background: detailSender.color }}>{detailSender.initials}</span>
+                <span><small>Correos de</small><strong>{detailSender.name}</strong><em>{detailEstimate || detailSender.count} mensajes en {rangeLabels[scanRange].toLowerCase()}</em></span>
+              </div>
+              <button aria-label="Cerrar detalle" onClick={() => setDetailSender(null)}>×</button>
+            </header>
+            <div className="drawer-toolbar">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={detailMessages.length > 0 && detailMessages.every((message) => detailSelected.includes(message.id))}
+                  onChange={() => setDetailSelected(
+                    detailMessages.every((message) => detailSelected.includes(message.id))
+                      ? []
+                      : detailMessages.map((message) => message.id),
+                  )}
+                />
+                Seleccionar los {detailMessages.length} cargados
+              </label>
+              <span>{detailSelected.length} seleccionados</span>
+            </div>
+            {detailError && <div className="drawer-error">{detailError}</div>}
+            <div className="message-list">
+              {detailMessages.map((message) => (
+                <label className={`message-row ${detailSelected.includes(message.id) ? "selected" : ""}`} key={message.id}>
+                  <input type="checkbox" checked={detailSelected.includes(message.id)} onChange={() => toggleDetail(message.id)} />
+                  <span>
+                    <strong>{message.subject}</strong>
+                    <small>{message.snippet || "Sin vista previa disponible."}</small>
+                    <em>{new Intl.DateTimeFormat("es", { day: "numeric", month: "short", year: "numeric" }).format(new Date(message.receivedAt))}{message.hasUnsubscribe ? " · Admite desuscripción" : ""}</em>
+                  </span>
+                </label>
+              ))}
+              {detailLoading && <div className="drawer-loading"><span className="loader" /> Cargando correos...</div>}
+              {!detailLoading && !detailMessages.length && !detailError && <div className="empty-state">No encontramos correos en este periodo.</div>}
+              {detailPageToken && !detailLoading && (
+                <button className="load-more" onClick={() => loadSenderMessages(detailSender, detailPageToken, true)}>Cargar 50 más</button>
+              )}
+            </div>
+            <footer className="drawer-actions">
+              <button className="drawer-unsubscribe" disabled={busy} onClick={() => actDetail("unsubscribe")}><Icon name="ban" /> Desuscribir remitente</button>
+              <button className="drawer-trash" disabled={busy || !detailSelected.length} onClick={() => actDetail("trash")}><Icon name="trash" /> Mover seleccionados ({detailSelected.length})</button>
+            </footer>
+          </aside>
+        </div>
       )}
       {notice && <div className="toast">✓ {notice}</div>}
     </div>

@@ -13,6 +13,8 @@ type GmailHeader = { name: string; value: string };
 type GmailMessage = {
   id: string;
   internalDate?: string;
+  labelIds?: string[];
+  snippet?: string;
   payload?: { headers?: GmailHeader[] };
 };
 
@@ -48,11 +50,23 @@ function senderFrom(value: string) {
 function categoryFor(message: GmailMessage, from: string): SenderGroup["category"] {
   const unsubscribe = header(message, "List-Unsubscribe");
   const precedence = header(message, "Precedence").toLowerCase();
-  const value = `${from} ${precedence}`.toLowerCase();
-  if (/sale|promo|offer|marketing|shop|store|deals|temu|aliexpress/.test(value)) {
+  const subject = header(message, "Subject");
+  const value = `${from} ${subject} ${message.snippet ?? ""} ${precedence}`.toLowerCase();
+  const labels = new Set(message.labelIds ?? []);
+  const transactional = /recibo|factura|pedido|orden|compra confirmada|confirmaci[oó]n|contrase[nñ]a|c[oó]digo|verificaci[oó]n|seguridad|env[ií]o|entrega|receipt|invoice|order|password|verification|security|shipped|delivered/.test(value);
+  const promotional = /oferta|descuento|promoci[oó]n|cup[oó]n|rebaja|ahorra|compra ahora|env[ií]o gratis|precio especial|solo hoy|última oportunidad|sale|discount|promo|coupon|save \d|shop now|free shipping|special price|limited time|deal|% off|temu|aliexpress/.test(value);
+  const editorial = /newsletter|bolet[ií]n|resumen|semanal|diario|novedades|noticias|digest|weekly|daily|insights|roundup/.test(value);
+
+  if (transactional && !promotional) return "Notificaciones";
+  if (labels.has("CATEGORY_PROMOTIONS") || promotional) {
     return "Publicidad";
   }
-  if (unsubscribe || /bulk|list/.test(precedence)) return "Newsletters";
+  if (
+    labels.has("CATEGORY_UPDATES") ||
+    labels.has("CATEGORY_SOCIAL") ||
+    labels.has("CATEGORY_FORUMS")
+  ) return "Notificaciones";
+  if (editorial || unsubscribe || /bulk|list/.test(precedence)) return "Newsletters";
   return "Notificaciones";
 }
 
@@ -88,12 +102,22 @@ export async function GET(request: Request) {
     );
   }
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set("maxResults", "250");
+  listUrl.searchParams.set("maxResults", "100");
   listUrl.searchParams.set("q", query);
   const pageToken = requestUrl.searchParams.get("pageToken");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
   const listResponse = await fetch(listUrl, { headers: auth });
   if (!listResponse.ok) {
+    if (listResponse.status === 429) {
+      return jsonWithSession(
+        {
+          error: "Gmail alcanzó temporalmente su cuota por usuario.",
+          retryAfter: 60,
+        },
+        429,
+        setCookie,
+      );
+    }
     return jsonWithSession(
       { error: await googleApiError(listResponse, "No se pudieron consultar los mensajes de Gmail") },
       502,
@@ -115,14 +139,28 @@ export async function GET(request: Request) {
       url.searchParams.set("format", "metadata");
       for (const name of [
         "From",
+        "Subject",
         "List-Unsubscribe",
         "List-Unsubscribe-Post",
         "Precedence",
       ]) url.searchParams.append("metadataHeaders", name);
       const response = await fetch(url, { headers: auth });
-      return response.ok ? (await response.json()) as GmailMessage : null;
+      return {
+        message: response.ok ? (await response.json()) as GmailMessage : null,
+        rateLimited: response.status === 429,
+      };
     }));
-    messages.push(...results.filter((item): item is GmailMessage => Boolean(item)));
+    if (results.some((item) => item.rateLimited)) {
+      return jsonWithSession(
+        {
+          error: "Gmail alcanzó temporalmente su cuota por usuario.",
+          retryAfter: 60,
+        },
+        429,
+        setCookie,
+      );
+    }
+    messages.push(...results.map((item) => item.message).filter((item): item is GmailMessage => Boolean(item)));
   }
 
   const grouped = new Map<string, SenderGroup>();
