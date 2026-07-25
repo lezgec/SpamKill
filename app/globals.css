@@ -33,6 +33,7 @@ svg { width: 20px; height: 20px; }
 .provider-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; }
 .provider-card { border: 1px solid var(--line); background: rgba(255,255,255,.9); border-radius: 17px; padding: 22px 18px; text-align: left; cursor: pointer; display: grid; grid-template-columns: 46px 1fr 18px; align-items: center; gap: 12px; transition: .2s ease; box-shadow: 0 8px 28px rgba(31, 40, 70, .06); }
 .provider-card:hover { transform: translateY(-4px); border-color: #bfb1fa; box-shadow: 0 15px 35px rgba(70, 53, 140, .12); }
+.provider-card:disabled { opacity: .62; cursor: wait; transform: none; }
 .provider-logo, .account-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-weight: 800; background: #f2f3f7; }
 .provider-card.gmail .provider-logo, .account-mark.gmail { color: #e1493f; background: #fff0ef; }
 .provider-card.outlook .provider-logo, .account-mark.outlook { color: #1876d2; background: #eaf4ff; }
@@ -125,8 +126,14 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
 .action-bar .unsubscribe { background: #343c50; color: white; }
 .action-bar .delete { background: var(--purple); color: white; }
 .footer-copy { color: #959caa; font-size: 8px; text-align: center; margin: 15px 0 0; }
+.error-banner { max-width: 580px; margin: -18px auto 20px; border: 1px solid #f0c9c5; background: #fff3f1; color: #a3443b; border-radius: 10px; padding: 11px 14px; text-align: left; font-size: 11px; line-height: 1.45; }
+.dashboard-error { margin: -10px 0 18px; max-width: none; }
+.loading-state, .empty-state { min-height: 250px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #7f8898; font-size: 11px; }
+.loader { width: 19px; height: 19px; border: 2px solid #e3ddff; border-top-color: var(--purple); border-radius: 50%; animation: spin .8s linear infinite; }
+.action-bar button:disabled { opacity: .6; cursor: wait; }
 .toast { position: fixed; right: 24px; bottom: 24px; background: #20273a; color: white; padding: 13px 17px; border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.2); font-size: 11px; z-index: 10; animation: slidein .25s ease; }
 @keyframes slidein { from { transform: translateY(12px); opacity: 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 900px) {
   .app-shell { grid-template-columns: 76px 1fr; }

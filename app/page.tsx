@@ -1,38 +1,36 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Provider = "gmail" | "outlook" | "icloud";
 type Filter = "Todos" | "Publicidad" | "Newsletters" | "Notificaciones";
+type Sender = {
+  id: string;
+  name: string;
+  domain: string;
+  count: number;
+  category: Exclude<Filter, "Todos">;
+  color: string;
+  initials: string;
+  last: string;
+  unsub: boolean;
+  messageIds: string[];
+  primaryMessageId: string;
+};
 
 const providers = {
-  gmail: {
-    name: "Gmail",
-    email: "maria@gmail.com",
-    mark: "M",
-    tone: "gmail",
-  },
-  outlook: {
-    name: "Outlook",
-    email: "maria@outlook.com",
-    mark: "O",
-    tone: "outlook",
-  },
-  icloud: {
-    name: "iCloud",
-    email: "maria@icloud.com",
-    mark: "●",
-    tone: "icloud",
-  },
+  gmail: { name: "Gmail", email: "Cuenta de Google", mark: "M", tone: "gmail" },
+  outlook: { name: "Outlook", email: "Próximamente", mark: "O", tone: "outlook" },
+  icloud: { name: "iCloud", email: "Próximamente", mark: "●", tone: "icloud" },
 } as const;
 
-const senders = [
-  { id: 1, name: "Temu", domain: "mail.temu.com", count: 84, category: "Publicidad", color: "#f2612f", initials: "T", last: "Hoy", unsub: true },
-  { id: 2, name: "Canva", domain: "canva.com", count: 31, category: "Newsletters", color: "#7b61ff", initials: "Ca", last: "Ayer", unsub: true },
-  { id: 3, name: "LinkedIn", domain: "linkedin.com", count: 27, category: "Notificaciones", color: "#1676b7", initials: "in", last: "22 jul", unsub: true },
-  { id: 4, name: "AliExpress", domain: "aliexpress.com", count: 22, category: "Publicidad", color: "#e74334", initials: "A", last: "21 jul", unsub: true },
-  { id: 5, name: "Medium Daily Digest", domain: "medium.com", count: 18, category: "Newsletters", color: "#111827", initials: "M", last: "19 jul", unsub: true },
-  { id: 6, name: "Amazon", domain: "amazon.com", count: 13, category: "Notificaciones", color: "#ef9d24", initials: "a", last: "18 jul", unsub: false },
+const demoSenders: Sender[] = [
+  { id: "temu", name: "Temu", domain: "mail.temu.com", count: 84, category: "Publicidad", color: "#f2612f", initials: "T", last: "Hoy", unsub: true, messageIds: [], primaryMessageId: "" },
+  { id: "canva", name: "Canva", domain: "canva.com", count: 31, category: "Newsletters", color: "#7b61ff", initials: "CA", last: "Ayer", unsub: true, messageIds: [], primaryMessageId: "" },
+  { id: "linkedin", name: "LinkedIn", domain: "linkedin.com", count: 27, category: "Notificaciones", color: "#1676b7", initials: "IN", last: "22 jul", unsub: true, messageIds: [], primaryMessageId: "" },
+  { id: "aliexpress", name: "AliExpress", domain: "aliexpress.com", count: 22, category: "Publicidad", color: "#e74334", initials: "A", last: "21 jul", unsub: true, messageIds: [], primaryMessageId: "" },
+  { id: "medium", name: "Medium Daily Digest", domain: "medium.com", count: 18, category: "Newsletters", color: "#111827", initials: "M", last: "19 jul", unsub: true, messageIds: [], primaryMessageId: "" },
+  { id: "amazon", name: "Amazon", domain: "amazon.com", count: 13, category: "Notificaciones", color: "#ef9d24", initials: "A", last: "18 jul", unsub: false, messageIds: [], primaryMessageId: "" },
 ];
 
 function Icon({ name }: { name: "shield" | "search" | "spark" | "history" | "settings" | "logout" | "trash" | "ban" | "chevron" }) {
@@ -52,26 +50,128 @@ function Icon({ name }: { name: "shield" | "search" | "spark" | "history" | "set
 
 export default function Home() {
   const [provider, setProvider] = useState<Provider | null>(null);
+  const [gmailEmail, setGmailEmail] = useState("");
+  const [senders, setSenders] = useState<Sender[]>(demoSenders);
+  const [scanned, setScanned] = useState(195);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<Filter>("Todos");
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<number[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  const showNotice = (message: string) => {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), 4200);
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("google_error")) setError(`Google: ${params.get("google_error")}`);
+    if (params.get("provider") === "gmail") setProvider("gmail");
+  }, []);
+
+  useEffect(() => {
+    if (provider !== "gmail") return;
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    fetch("/api/google/scan")
+      .then(async (response) => {
+        const data = await response.json() as { groups?: Sender[]; email?: string; scanned?: number; error?: string };
+        if (!response.ok) throw new Error(data.error ?? "No se pudo analizar Gmail.");
+        if (!cancelled) {
+          setSenders(data.groups ?? []);
+          setGmailEmail(data.email ?? "");
+          setScanned(data.scanned ?? 0);
+        }
+      })
+      .catch((reason: Error) => {
+        if (!cancelled) {
+          setError(reason.message);
+          setProvider(null);
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [provider]);
 
   const rows = useMemo(() => senders.filter((sender) => {
     const matchesFilter = filter === "Todos" || sender.category === filter;
     const matchesQuery = `${sender.name} ${sender.domain}`.toLowerCase().includes(query.toLowerCase());
     return matchesFilter && matchesQuery;
-  }), [filter, query]);
+  }), [filter, query, senders]);
 
-  const chosenCount = senders.filter((sender) => selected.includes(sender.id)).reduce((total, sender) => total + sender.count, 0);
+  const chosen = senders.filter((sender) => selected.includes(sender.id));
+  const chosenCount = chosen.reduce((total, sender) => total + sender.count, 0);
+  const advertising = senders.filter((sender) => sender.category === "Publicidad").reduce((total, sender) => total + sender.count, 0);
+  const available = senders.filter((sender) => sender.unsub).length;
 
-  const toggle = (id: number) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  const chooseProvider = async (key: Provider) => {
+    setError("");
+    if (key !== "gmail") {
+      setProvider(key);
+      setSenders(demoSenders);
+      setScanned(195);
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await fetch("/api/google/status");
+      const data = await response.json() as { connected: boolean; email?: string };
+      if (data.connected) {
+        setGmailEmail(data.email ?? "");
+        setProvider("gmail");
+      } else {
+        window.location.assign("/api/google/connect");
+      }
+    } catch {
+      setError("No se pudo iniciar la conexión con Gmail.");
+      setLoading(false);
+    }
+  };
 
-  const act = (message: string) => {
-    if (!selected.length) return;
-    setNotice(message);
+  const disconnect = async () => {
+    if (provider === "gmail") await fetch("/api/google/disconnect", { method: "POST" });
+    setProvider(null);
     setSelected([]);
-    window.setTimeout(() => setNotice(""), 3500);
+    setGmailEmail("");
+    setSenders(demoSenders);
+  };
+
+  const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+
+  const act = async (action: "unsubscribe" | "unsubscribe_and_trash") => {
+    if (!selected.length || busy) return;
+    if (provider !== "gmail") {
+      showNotice(action === "unsubscribe" ? "Vista demostrativa: desuscripciones preparadas." : `${chosenCount} mensajes se moverían a la papelera.`);
+      setSelected([]);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/google/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          groups: chosen.map(({ primaryMessageId, messageIds }) => ({ primaryMessageId, messageIds })),
+        }),
+      });
+      const data = await response.json() as { unsubscribed?: number; manual?: number; trashed?: number; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
+      showNotice(`${data.unsubscribed ?? 0} desuscripciones completadas · ${data.trashed ?? 0} mensajes a la papelera${data.manual ? ` · ${data.manual} requieren revisión manual` : ""}`);
+      if (action === "unsubscribe_and_trash") {
+        setSenders((current) => current.filter((sender) => !selected.includes(sender.id)));
+      }
+      setSelected([]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo completar la acción.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (!provider) {
@@ -86,13 +186,14 @@ export default function Home() {
           <div className="eyebrow"><Icon name="spark" /> Limpia tu bandeja en minutos</div>
           <h1>Recupera el control<br />de tu correo.</h1>
           <p>Elige una cuenta para analizar suscripciones, detener publicidad y limpiar mensajes. Cada cuenta funciona por separado.</p>
+          {error && <div className="error-banner">{error}</div>}
           <div className="provider-grid">
             {(Object.keys(providers) as Provider[]).map((key) => {
               const item = providers[key];
               return (
-                <button key={key} className={`provider-card ${item.tone}`} onClick={() => setProvider(key)}>
+                <button key={key} className={`provider-card ${item.tone}`} onClick={() => chooseProvider(key)} disabled={loading}>
                   <span className="provider-logo">{item.mark}</span>
-                  <span><strong>Continuar con {item.name}</strong><small>Conectar cuenta de forma segura</small></span>
+                  <span><strong>{loading && key === "gmail" ? "Conectando..." : `Continuar con ${item.name}`}</strong><small>{key === "gmail" ? "Conectar cuenta real de forma segura" : "Vista demostrativa — integración posterior"}</small></span>
                   <Icon name="chevron" />
                 </button>
               );
@@ -105,6 +206,7 @@ export default function Home() {
   }
 
   const account = providers[provider];
+  const accountEmail = provider === "gmail" && gmailEmail ? gmailEmail : account.email;
 
   return (
     <div className="app-shell">
@@ -112,36 +214,37 @@ export default function Home() {
         <div className="brand"><span className="brand-icon"><Icon name="shield" /></span>Spam<span>Kill</span></div>
         <div className="account-card">
           <span className={`account-mark ${account.tone}`}>{account.mark}</span>
-          <span><strong>{account.name}</strong><small>{account.email}</small></span>
+          <span><strong>{account.name}</strong><small>{accountEmail}</small></span>
           <button aria-label="Cambiar cuenta" onClick={() => { setProvider(null); setSelected([]); }}><Icon name="chevron" /></button>
         </div>
         <nav className="side-nav">
-          <button className="active"><Icon name="spark" /> Limpieza inteligente <b>195</b></button>
+          <button className="active"><Icon name="spark" /> Limpieza inteligente <b>{senders.length}</b></button>
           <button><Icon name="history" /> Historial</button>
           <button><Icon name="settings" /> Configuración</button>
         </nav>
         <div className="privacy-note">
           <span><Icon name="shield" /></span>
           <strong>Privacidad primero</strong>
-          <p>Solo analizamos lo necesario para detectar suscripciones.</p>
+          <p>Solo analizamos encabezados y datos necesarios para detectar suscripciones.</p>
         </div>
-        <button className="disconnect" onClick={() => setProvider(null)}><Icon name="logout" /> Desconectar cuenta</button>
+        <button className="disconnect" onClick={disconnect}><Icon name="logout" /> Desconectar cuenta</button>
       </aside>
 
       <main className="dashboard">
         <header className="dash-header">
           <div>
             <p className="breadcrumb">{account.name} / Limpieza</p>
-            <h1>Tu bandeja, bajo control.</h1>
-            <p>Encontramos <strong>195 mensajes</strong> de 6 remitentes que puedes revisar.</p>
+            <h1>{loading ? "Analizando tu bandeja..." : "Tu bandeja, bajo control."}</h1>
+            <p>{loading ? "Esto puede tomar unos segundos." : <>Encontramos <strong>{senders.reduce((total, sender) => total + sender.count, 0)} mensajes</strong> de {senders.length} remitentes para revisar.</>}</p>
           </div>
           <div className="safety"><span>●</span><div><strong>Modo seguro activo</strong><small>Los correos irán a la papelera</small></div></div>
         </header>
 
+        {error && <div className="error-banner dashboard-error">{error}</div>}
         <section className="stats">
-          <article><span className="stat-icon violet"><Icon name="spark" /></span><div><small>Mensajes detectados</small><strong>195</strong><em>Últimos 90 días</em></div></article>
-          <article><span className="stat-icon orange">%</span><div><small>Publicidad</small><strong>106</strong><em>54% del total</em></div></article>
-          <article><span className="stat-icon green"><Icon name="ban" /></span><div><small>Desuscripción disponible</small><strong>5</strong><em>De 6 remitentes</em></div></article>
+          <article><span className="stat-icon violet"><Icon name="spark" /></span><div><small>Mensajes analizados</small><strong>{scanned}</strong><em>Últimos 90 días</em></div></article>
+          <article><span className="stat-icon orange">%</span><div><small>Publicidad</small><strong>{advertising}</strong><em>Detección inicial</em></div></article>
+          <article><span className="stat-icon green"><Icon name="ban" /></span><div><small>Desuscripción disponible</small><strong>{available}</strong><em>De {senders.length} remitentes</em></div></article>
         </section>
 
         <section className="mail-panel">
@@ -158,7 +261,9 @@ export default function Home() {
           </div>
 
           <div className="sender-list">
-            {rows.map((sender) => (
+            {loading && <div className="loading-state"><span className="loader" /> Analizando los últimos 90 días...</div>}
+            {!loading && rows.length === 0 && <div className="empty-state">No encontramos remitentes con estos filtros.</div>}
+            {!loading && rows.map((sender) => (
               <label className={`sender-row ${selected.includes(sender.id) ? "selected" : ""}`} key={sender.id}>
                 <span className="sender-main"><input type="checkbox" checked={selected.includes(sender.id)} onChange={() => toggle(sender.id)} /><i style={{ background: sender.color }}>{sender.initials}</i><span><strong>{sender.name}</strong><small>{sender.domain}</small></span></span>
                 <span><b className={`tag ${sender.category.toLowerCase()}`}>{sender.category}</b></span>
@@ -172,8 +277,8 @@ export default function Home() {
           {selected.length > 0 && (
             <div className="action-bar">
               <div><strong>{selected.length} remitentes seleccionados</strong><small>{chosenCount} mensajes afectados</small></div>
-              <button className="unsubscribe" onClick={() => act("Desuscripciones programadas correctamente.")}><Icon name="ban" /> Desuscribir</button>
-              <button className="delete" onClick={() => act(`${chosenCount} mensajes enviados a la papelera.`)}><Icon name="trash" /> Desuscribir y limpiar</button>
+              <button disabled={busy} className="unsubscribe" onClick={() => act("unsubscribe")}><Icon name="ban" /> {busy ? "Procesando..." : "Desuscribir"}</button>
+              <button disabled={busy} className="delete" onClick={() => act("unsubscribe_and_trash")}><Icon name="trash" /> Desuscribir y limpiar</button>
             </div>
           )}
         </section>
