@@ -4,6 +4,7 @@ export type GoogleSession = {
   expiresAt: number;
   email: string;
 };
+export type ScanRange = "all" | "30d" | "90d" | "1y" | "custom";
 
 export const GOOGLE_SESSION_COOKIE = "spamkill_google";
 export const GOOGLE_STATE_COOKIE = "spamkill_google_state";
@@ -202,4 +203,41 @@ export function extractHttpsUnsubscribe(header: string): URL | null {
     if (url) return url;
   }
   return null;
+}
+
+function validDate(value?: string | null): value is string {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
+export function buildMailboxQuery({
+  range,
+  after,
+  before,
+  sender,
+}: {
+  range: ScanRange;
+  after?: string | null;
+  before?: string | null;
+  sender?: string | null;
+}): string {
+  const terms = ["-in:sent", "-in:drafts", "-in:spam", "-in:trash"];
+  if (range === "30d") terms.push("newer_than:30d");
+  if (range === "90d") terms.push("newer_than:90d");
+  if (range === "1y") terms.push("newer_than:1y");
+  if (range === "custom") {
+    if (!validDate(after) || !validDate(before) || after > before) {
+      throw new Error("Selecciona un intervalo de fechas válido.");
+    }
+    terms.push(`after:${after.replaceAll("-", "/")}`);
+    const inclusiveEnd = new Date(`${before}T00:00:00Z`);
+    inclusiveEnd.setUTCDate(inclusiveEnd.getUTCDate() + 1);
+    terms.push(`before:${inclusiveEnd.toISOString().slice(0, 10).replaceAll("-", "/")}`);
+  }
+  if (sender) {
+    if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(sender)) {
+      throw new Error("El remitente seleccionado no es válido.");
+    }
+    terms.push(`from:(${sender})`);
+  }
+  return terms.join(" ");
 }

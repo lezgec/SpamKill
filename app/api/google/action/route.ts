@@ -1,19 +1,23 @@
 import {
   authorizedGoogleSession,
+  buildMailboxQuery,
   extractHttpsUnsubscribe,
   jsonWithSession,
+  type ScanRange,
 } from "@/lib/google";
 import { getDb } from "@/db";
 import { unsubscribeHistory } from "@/db/schema";
 
 type ActionPayload = {
   action?: "unsubscribe" | "unsubscribe_and_trash";
+  range?: ScanRange;
+  after?: string;
+  before?: string;
   groups?: Array<{
     id?: string;
     name?: string;
     domain?: string;
     primaryMessageId?: string;
-    messageIds?: string[];
   }>;
 };
 
@@ -21,6 +25,31 @@ type GmailHeader = { name: string; value: string };
 
 function header(headers: GmailHeader[], name: string): string {
   return headers.find((item) => item.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
+async function findMessageIds(
+  accessToken: string,
+  query: string,
+): Promise<string[]> {
+  const ids: string[] = [];
+  let pageToken: string | null = null;
+  do {
+    const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
+    url.searchParams.set("maxResults", "500");
+    url.searchParams.set("q", query);
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) break;
+    const page = (await response.json()) as {
+      messages?: Array<{ id: string }>;
+      nextPageToken?: string;
+    };
+    ids.push(...(page.messages ?? []).map((message) => message.id));
+    pageToken = page.nextPageToken ?? null;
+  } while (pageToken);
+  return ids;
 }
 
 export async function POST(request: Request) {
@@ -33,6 +62,7 @@ export async function POST(request: Request) {
   }
 
   const auth = { Authorization: `Bearer ${session.accessToken}` };
+  const range = payload.range ?? "all";
   let unsubscribed = 0;
   let manual = 0;
   let trashed = 0;
@@ -83,15 +113,40 @@ export async function POST(request: Request) {
     }
 
     let groupTrashed = 0;
-    if (payload.action === "unsubscribe_and_trash") {
-      for (const messageId of (group.messageIds ?? []).slice(0, 500)) {
+    if (payload.action === "unsubscribe_and_trash" && group.id) {
+      let query: string;
+      try {
+        query = buildMailboxQuery({
+          range,
+          after: payload.after,
+          before: payload.before,
+          sender: group.id,
+        });
+      } catch (error) {
+        return jsonWithSession(
+          { error: error instanceof Error ? error.message : "El intervalo no es válido." },
+          400,
+          setCookie,
+        );
+      }
+      const messageIds = await findMessageIds(session.accessToken, query);
+      for (let index = 0; index < messageIds.length; index += 1000) {
+        const ids = messageIds.slice(index, index + 1000);
         const response = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/trash`,
-          { method: "POST", headers: auth },
+          "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify",
+          {
+            method: "POST",
+            headers: { ...auth, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ids,
+              addLabelIds: ["TRASH"],
+              removeLabelIds: ["INBOX"],
+            }),
+          },
         );
         if (response.ok) {
-          trashed += 1;
-          groupTrashed += 1;
+          trashed += ids.length;
+          groupTrashed += ids.length;
         }
       }
     }

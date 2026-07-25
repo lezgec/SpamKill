@@ -1,7 +1,9 @@
 import {
   authorizedGoogleSession,
+  buildMailboxQuery,
   googleApiError,
   jsonWithSession,
+  type ScanRange,
 } from "@/lib/google";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
@@ -24,7 +26,6 @@ type SenderGroup = {
   initials: string;
   last: string;
   unsub: boolean;
-  messageIds: string[];
   primaryMessageId: string;
   latestAt: number;
 };
@@ -67,9 +68,30 @@ export async function GET(request: Request) {
   if (!session) return jsonWithSession({ error: "Gmail no está conectado." }, 401);
 
   const auth = { Authorization: `Bearer ${session.accessToken}` };
+  const requestUrl = new URL(request.url);
+  const rangeValue = requestUrl.searchParams.get("range") ?? "all";
+  const range = (["all", "30d", "90d", "1y", "custom"].includes(rangeValue)
+    ? rangeValue
+    : "all") as ScanRange;
+  let query: string;
+  try {
+    query = buildMailboxQuery({
+      range,
+      after: requestUrl.searchParams.get("after"),
+      before: requestUrl.searchParams.get("before"),
+    });
+  } catch (error) {
+    return jsonWithSession(
+      { error: error instanceof Error ? error.message : "El intervalo no es válido." },
+      400,
+      setCookie,
+    );
+  }
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-  listUrl.searchParams.set("maxResults", "100");
-  listUrl.searchParams.set("q", "newer_than:90d");
+  listUrl.searchParams.set("maxResults", "250");
+  listUrl.searchParams.set("q", query);
+  const pageToken = requestUrl.searchParams.get("pageToken");
+  if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
   const listResponse = await fetch(listUrl, { headers: auth });
   if (!listResponse.ok) {
     return jsonWithSession(
@@ -78,7 +100,11 @@ export async function GET(request: Request) {
       setCookie,
     );
   }
-  const list = (await listResponse.json()) as { messages?: Array<{ id: string }> };
+  const list = (await listResponse.json()) as {
+    messages?: Array<{ id: string }>;
+    nextPageToken?: string;
+    resultSizeEstimate?: number;
+  };
   const ids = list.messages ?? [];
   const messages: GmailMessage[] = [];
 
@@ -107,7 +133,6 @@ export async function GET(request: Request) {
     const existing = grouped.get(sender.email);
     if (existing) {
       existing.count += 1;
-      existing.messageIds.push(message.id);
       const receivedAt = Number(message.internalDate ?? 0);
       if (receivedAt > existing.latestAt) {
         existing.latestAt = receivedAt;
@@ -128,14 +153,12 @@ export async function GET(request: Request) {
       initials: sender.name.slice(0, 2).toUpperCase(),
       last: formatDate(message.internalDate),
       unsub: Boolean(header(message, "List-Unsubscribe")),
-      messageIds: [message.id],
       primaryMessageId: message.id,
       latestAt: Number(message.internalDate ?? 0),
     });
   }
 
   const groups = [...grouped.values()]
-    .filter((group) => group.unsub || group.count >= 2)
     .sort((a, b) => b.count - a.count);
 
   const db = getDb();
@@ -172,6 +195,8 @@ export async function GET(request: Request) {
       email: session.email,
       groups,
       scanned: messages.length,
+      nextPageToken: list.nextPageToken ?? null,
+      resultSizeEstimate: list.resultSizeEstimate ?? messages.length,
     },
     200,
     setCookie,

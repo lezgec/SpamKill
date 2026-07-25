@@ -88,6 +88,23 @@ svg { width: 20px; height: 20px; }
 .stats small { color: #7d8798; font-size: 9px; margin-bottom: 4px; }
 .stats strong { font-size: 23px; line-height: 1; }
 .stats em { color: #a2a8b3; font-size: 8px; margin-top: 4px; }
+.scope-panel { background: white; border: 1px solid var(--line); border-radius: 13px; padding: 14px 17px; margin-bottom: 18px; display: grid; grid-template-columns: minmax(175px, .8fr) 2fr; gap: 14px; align-items: center; }
+.scope-panel > div:first-child small, .scope-panel > div:first-child strong { display: block; }
+.scope-panel > div:first-child small { color: var(--purple); font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+.scope-panel > div:first-child strong { font-size: 10px; }
+.scope-options { display: flex; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+.scope-options button { border: 1px solid var(--line); background: white; color: #717c8e; border-radius: 8px; padding: 8px 10px; font-size: 8px; cursor: pointer; }
+.scope-options button:hover, .scope-options button.active { border-color: #cfc4ff; color: var(--purple); background: var(--purple-soft); }
+.scope-options button:disabled { opacity: .55; cursor: wait; }
+.custom-dates { grid-column: 1 / -1; border-top: 1px solid #eff0f4; padding-top: 12px; display: flex; justify-content: flex-end; align-items: end; gap: 8px; }
+.custom-dates label { color: #858e9e; font-size: 8px; display: grid; gap: 4px; }
+.custom-dates input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; color: var(--ink); font-size: 9px; background: white; }
+.custom-dates button { border: 0; background: var(--purple); color: white; border-radius: 8px; padding: 8px 12px; font-size: 9px; cursor: pointer; }
+.custom-dates button:disabled { opacity: .5; cursor: not-allowed; }
+.scan-progress { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
+.scan-progress > span { height: 5px; background: #ece9f9; border-radius: 100px; flex: 1; overflow: hidden; }
+.scan-progress > span i { display: block; height: 100%; background: var(--purple); border-radius: inherit; transition: width .25s ease; }
+.scan-progress button { border: 0; background: transparent; color: #8a6ae8; font-size: 8px; cursor: pointer; white-space: nowrap; }
 .mail-panel { background: white; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 6px 24px rgba(35,44,70,.03); position: relative; padding-bottom: 64px; }
 .toolbar { min-height: 62px; padding: 12px 17px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); }
 .filters { display: flex; gap: 5px; overflow-x: auto; }
@@ -174,6 +191,8 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
   .side-nav button { padding: 11px; }
   .side-nav button svg { width: 20px; }
   .stats { grid-template-columns: 1fr; }
+  .scope-panel { grid-template-columns: 1fr; }
+  .scope-options { justify-content: flex-start; }
   .history-row { grid-template-columns: 40px minmax(140px, 1.3fr) 1fr minmax(160px, 1.2fr); }
   .history-trash { display: none; }
   .stats article { align-items: center; }
@@ -199,6 +218,12 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
   .dash-header { display: block; }
   .safety { display: none; }
   .stats { grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .scope-panel { padding: 12px; }
+  .scope-options { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 3px; }
+  .scope-options button { white-space: nowrap; }
+  .custom-dates { justify-content: stretch; flex-wrap: wrap; }
+  .custom-dates label { flex: 1; }
+  .custom-dates input { width: 100%; }
   .history-summary { grid-template-columns: repeat(3, 1fr); gap: 7px; }
   .history-summary article { padding: 12px; }
   .history-summary strong { font-size: 20px; }

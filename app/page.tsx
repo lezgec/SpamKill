@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Provider = "gmail" | "outlook" | "icloud";
 type Filter = "Todos" | "Publicidad" | "Newsletters" | "Notificaciones";
+type ScanRange = "all" | "30d" | "90d" | "1y" | "custom";
 type Sender = {
   id: string;
   name: string;
@@ -14,8 +15,8 @@ type Sender = {
   initials: string;
   last: string;
   unsub: boolean;
-  messageIds: string[];
   primaryMessageId: string;
+  latestAt: number;
 };
 type HistoryRecord = {
   id: string;
@@ -34,14 +35,21 @@ const providers = {
   outlook: { name: "Outlook", email: "Próximamente", mark: "O", tone: "outlook" },
   icloud: { name: "iCloud", email: "Próximamente", mark: "●", tone: "icloud" },
 } as const;
+const rangeLabels: Record<ScanRange, string> = {
+  all: "Todos los correos",
+  "30d": "Últimos 30 días",
+  "90d": "Últimos 90 días",
+  "1y": "Último año",
+  custom: "Fechas personalizadas",
+};
 
 const demoSenders: Sender[] = [
-  { id: "temu", name: "Temu", domain: "mail.temu.com", count: 84, category: "Publicidad", color: "#f2612f", initials: "T", last: "Hoy", unsub: true, messageIds: [], primaryMessageId: "" },
-  { id: "canva", name: "Canva", domain: "canva.com", count: 31, category: "Newsletters", color: "#7b61ff", initials: "CA", last: "Ayer", unsub: true, messageIds: [], primaryMessageId: "" },
-  { id: "linkedin", name: "LinkedIn", domain: "linkedin.com", count: 27, category: "Notificaciones", color: "#1676b7", initials: "IN", last: "22 jul", unsub: true, messageIds: [], primaryMessageId: "" },
-  { id: "aliexpress", name: "AliExpress", domain: "aliexpress.com", count: 22, category: "Publicidad", color: "#e74334", initials: "A", last: "21 jul", unsub: true, messageIds: [], primaryMessageId: "" },
-  { id: "medium", name: "Medium Daily Digest", domain: "medium.com", count: 18, category: "Newsletters", color: "#111827", initials: "M", last: "19 jul", unsub: true, messageIds: [], primaryMessageId: "" },
-  { id: "amazon", name: "Amazon", domain: "amazon.com", count: 13, category: "Notificaciones", color: "#ef9d24", initials: "A", last: "18 jul", unsub: false, messageIds: [], primaryMessageId: "" },
+  { id: "temu", name: "Temu", domain: "mail.temu.com", count: 84, category: "Publicidad", color: "#f2612f", initials: "T", last: "Hoy", unsub: true, primaryMessageId: "", latestAt: 0 },
+  { id: "canva", name: "Canva", domain: "canva.com", count: 31, category: "Newsletters", color: "#7b61ff", initials: "CA", last: "Ayer", unsub: true, primaryMessageId: "", latestAt: 0 },
+  { id: "linkedin", name: "LinkedIn", domain: "linkedin.com", count: 27, category: "Notificaciones", color: "#1676b7", initials: "IN", last: "22 jul", unsub: true, primaryMessageId: "", latestAt: 0 },
+  { id: "aliexpress", name: "AliExpress", domain: "aliexpress.com", count: 22, category: "Publicidad", color: "#e74334", initials: "A", last: "21 jul", unsub: true, primaryMessageId: "", latestAt: 0 },
+  { id: "medium", name: "Medium Daily Digest", domain: "medium.com", count: 18, category: "Newsletters", color: "#111827", initials: "M", last: "19 jul", unsub: true, primaryMessageId: "", latestAt: 0 },
+  { id: "amazon", name: "Amazon", domain: "amazon.com", count: 13, category: "Notificaciones", color: "#ef9d24", initials: "A", last: "18 jul", unsub: false, primaryMessageId: "", latestAt: 0 },
 ];
 
 function Icon({ name }: { name: "shield" | "search" | "spark" | "history" | "settings" | "logout" | "trash" | "ban" | "chevron" }) {
@@ -65,6 +73,26 @@ const historyStatus = {
   manual: { label: "Revisión manual", detail: "El remitente no admite confirmación automática" },
   failed: { label: "Fallida", detail: "Llegó publicidad después de la solicitud" },
 } as const;
+
+function mergeSenderPages(current: Sender[], incoming: Sender[]): Sender[] {
+  const grouped = new Map(current.map((sender) => [sender.id, { ...sender }]));
+  for (const sender of incoming) {
+    const existing = grouped.get(sender.id);
+    if (!existing) {
+      grouped.set(sender.id, { ...sender });
+      continue;
+    }
+    existing.count += sender.count;
+    existing.unsub = existing.unsub || sender.unsub;
+    if (sender.latestAt > existing.latestAt) {
+      existing.latestAt = sender.latestAt;
+      existing.last = sender.last;
+      existing.primaryMessageId = sender.primaryMessageId;
+      existing.category = sender.category;
+    }
+  }
+  return [...grouped.values()].sort((a, b) => b.count - a.count);
+}
 
 function HistoryView({
   records,
@@ -136,6 +164,7 @@ export default function Home() {
   const [gmailEmail, setGmailEmail] = useState("");
   const [senders, setSenders] = useState<Sender[]>(demoSenders);
   const [scanned, setScanned] = useState(195);
+  const [estimate, setEstimate] = useState(195);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<"cleanup" | "history">("cleanup");
@@ -146,11 +175,72 @@ export default function Home() {
   const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [scanRange, setScanRange] = useState<ScanRange>("all");
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customAfter, setCustomAfter] = useState("");
+  const [customBefore, setCustomBefore] = useState("");
+  const scanAbortRef = useRef<AbortController | null>(null);
 
   const showNotice = (message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 4200);
   };
+
+  const runScan = useCallback(async (
+    range: ScanRange,
+    after = "",
+    before = "",
+  ) => {
+    scanAbortRef.current?.abort();
+    const controller = new AbortController();
+    scanAbortRef.current = controller;
+    setLoading(true);
+    setError("");
+    setSelected([]);
+    setSenders([]);
+    setScanned(0);
+    setEstimate(0);
+    setScanRange(range);
+    setCustomOpen(range === "custom");
+
+    let pageToken: string | null = null;
+    let totalScanned = 0;
+    let accumulated: Sender[] = [];
+    try {
+      do {
+        const url = new URL("/api/google/scan", window.location.origin);
+        url.searchParams.set("range", range);
+        if (after) url.searchParams.set("after", after);
+        if (before) url.searchParams.set("before", before);
+        if (pageToken) url.searchParams.set("pageToken", pageToken);
+        const response = await fetch(url, { signal: controller.signal });
+        const data = await response.json() as {
+          groups?: Sender[];
+          email?: string;
+          scanned?: number;
+          nextPageToken?: string | null;
+          resultSizeEstimate?: number;
+          error?: string;
+        };
+        if (!response.ok) throw new Error(data.error ?? "No se pudo analizar Gmail.");
+        accumulated = mergeSenderPages(accumulated, data.groups ?? []);
+        totalScanned += data.scanned ?? 0;
+        pageToken = data.nextPageToken ?? null;
+        setSenders(accumulated);
+        setGmailEmail(data.email ?? "");
+        setScanned(totalScanned);
+        setEstimate(data.resultSizeEstimate ?? totalScanned);
+      } while (pageToken && !controller.signal.aborted);
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      setError(reason instanceof Error ? reason.message : "No se pudo analizar Gmail.");
+    } finally {
+      if (scanAbortRef.current === controller) {
+        setLoading(false);
+        scanAbortRef.current = null;
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -160,28 +250,9 @@ export default function Home() {
 
   useEffect(() => {
     if (provider !== "gmail") return;
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-    fetch("/api/google/scan")
-      .then(async (response) => {
-        const data = await response.json() as { groups?: Sender[]; email?: string; scanned?: number; error?: string };
-        if (!response.ok) throw new Error(data.error ?? "No se pudo analizar Gmail.");
-        if (!cancelled) {
-          setSenders(data.groups ?? []);
-          setGmailEmail(data.email ?? "");
-          setScanned(data.scanned ?? 0);
-        }
-      })
-      .catch((reason: Error) => {
-        if (!cancelled) {
-          setError(reason.message);
-          setProvider(null);
-        }
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [provider]);
+    runScan("all");
+    return () => scanAbortRef.current?.abort();
+  }, [provider, runScan]);
 
   const rows = useMemo(() => senders.filter((sender) => {
     const matchesFilter = filter === "Todos" || sender.category === filter;
@@ -200,6 +271,7 @@ export default function Home() {
       setProvider(key);
       setSenders(demoSenders);
       setScanned(195);
+      setEstimate(195);
       return;
     }
     setLoading(true);
@@ -219,6 +291,7 @@ export default function Home() {
   };
 
   const disconnect = async () => {
+    scanAbortRef.current?.abort();
     if (provider === "gmail") await fetch("/api/google/disconnect", { method: "POST" });
     setProvider(null);
     setSelected([]);
@@ -240,11 +313,7 @@ export default function Home() {
     setError("");
     try {
       if (refresh) {
-        const scanResponse = await fetch("/api/google/scan");
-        if (!scanResponse.ok) {
-          const scanData = await scanResponse.json() as { error?: string };
-          throw new Error(scanData.error ?? "No se pudo comprobar el correo reciente.");
-        }
+        await runScan("30d");
       }
       const response = await fetch("/api/google/history");
       const data = await response.json() as { history?: HistoryRecord[]; error?: string };
@@ -272,12 +341,14 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
-          groups: chosen.map(({ id, name, domain, primaryMessageId, messageIds }) => ({
+          range: scanRange,
+          after: customAfter,
+          before: customBefore,
+          groups: chosen.map(({ id, name, domain, primaryMessageId }) => ({
             id,
             name,
             domain,
             primaryMessageId,
-            messageIds,
           })),
         }),
       });
@@ -359,16 +430,55 @@ export default function Home() {
           <div>
             <p className="breadcrumb">{account.name} / Limpieza</p>
             <h1>{loading ? "Analizando tu bandeja..." : "Tu bandeja, bajo control."}</h1>
-            <p>{loading ? "Esto puede tomar unos segundos." : <>Encontramos <strong>{senders.reduce((total, sender) => total + sender.count, 0)} mensajes</strong> de {senders.length} remitentes para revisar.</>}</p>
+            <p>{loading ? <>Procesados <strong>{scanned}</strong>{estimate ? ` de aproximadamente ${estimate}` : ""}. Puedes detener el análisis cuando quieras.</> : <>Encontramos <strong>{senders.reduce((total, sender) => total + sender.count, 0)} mensajes</strong> de {senders.length} remitentes para revisar.</>}</p>
           </div>
           <div className="safety"><span>●</span><div><strong>Modo seguro activo</strong><small>Los correos irán a la papelera</small></div></div>
         </header>
 
         {error && <div className="error-banner dashboard-error">{error}</div>}
         <section className="stats">
-          <article><span className="stat-icon violet"><Icon name="spark" /></span><div><small>Mensajes analizados</small><strong>{scanned}</strong><em>Últimos 90 días</em></div></article>
+          <article><span className="stat-icon violet"><Icon name="spark" /></span><div><small>Mensajes analizados</small><strong>{scanned}</strong><em>{rangeLabels[scanRange]}</em></div></article>
           <article><span className="stat-icon orange">%</span><div><small>Publicidad</small><strong>{advertising}</strong><em>Detección inicial</em></div></article>
           <article><span className="stat-icon green"><Icon name="ban" /></span><div><small>Desuscripción disponible</small><strong>{available}</strong><em>De {senders.length} remitentes</em></div></article>
+        </section>
+
+        <section className="scope-panel">
+          <div>
+            <small>Periodo del análisis</small>
+            <strong>Elige qué parte de Gmail quieres revisar</strong>
+          </div>
+          <div className="scope-options">
+            {(["all", "30d", "90d", "1y"] as ScanRange[]).map((range) => (
+              <button
+                key={range}
+                className={scanRange === range ? "active" : ""}
+                disabled={loading}
+                onClick={() => { setCustomOpen(false); runScan(range); }}
+              >
+                {rangeLabels[range]}
+              </button>
+            ))}
+            <button
+              className={customOpen ? "active" : ""}
+              disabled={loading}
+              onClick={() => setCustomOpen(true)}
+            >
+              Por fechas
+            </button>
+          </div>
+          {customOpen && (
+            <div className="custom-dates">
+              <label>Desde<input type="date" value={customAfter} onChange={(event) => setCustomAfter(event.target.value)} /></label>
+              <label>Hasta<input type="date" value={customBefore} onChange={(event) => setCustomBefore(event.target.value)} /></label>
+              <button disabled={loading || !customAfter || !customBefore} onClick={() => runScan("custom", customAfter, customBefore)}>Analizar fechas</button>
+            </div>
+          )}
+          {loading && (
+            <div className="scan-progress">
+              <span><i style={{ width: estimate ? `${Math.min(100, Math.round((scanned / estimate) * 100))}%` : "12%" }} /></span>
+              <button onClick={() => scanAbortRef.current?.abort()}>Detener análisis</button>
+            </div>
+          )}
         </section>
 
         <section className="mail-panel">
@@ -385,7 +495,7 @@ export default function Home() {
           </div>
 
           <div className="sender-list">
-            {loading && <div className="loading-state"><span className="loader" /> Analizando los últimos 90 días...</div>}
+            {loading && <div className="loading-state"><span className="loader" /> Analizando {rangeLabels[scanRange].toLowerCase()}...</div>}
             {!loading && rows.length === 0 && <div className="empty-state">No encontramos remitentes con estos filtros.</div>}
             {!loading && rows.map((sender) => (
               <label className={`sender-row ${selected.includes(sender.id) ? "selected" : ""}`} key={sender.id}>
