@@ -3,10 +3,18 @@ import {
   extractHttpsUnsubscribe,
   jsonWithSession,
 } from "@/lib/google";
+import { getDb } from "@/db";
+import { unsubscribeHistory } from "@/db/schema";
 
 type ActionPayload = {
   action?: "unsubscribe" | "unsubscribe_and_trash";
-  groups?: Array<{ primaryMessageId?: string; messageIds?: string[] }>;
+  groups?: Array<{
+    id?: string;
+    name?: string;
+    domain?: string;
+    primaryMessageId?: string;
+    messageIds?: string[];
+  }>;
 };
 
 type GmailHeader = { name: string; value: string };
@@ -30,6 +38,8 @@ export async function POST(request: Request) {
   let trashed = 0;
 
   for (const group of groups) {
+    let groupUnsubscribed = false;
+    let groupManual = false;
     if (group.primaryMessageId) {
       const metadataUrl = new URL(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(group.primaryMessageId)}`,
@@ -58,22 +68,64 @@ export async function POST(request: Request) {
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: "List-Unsubscribe=One-Click",
           });
-          if (response.ok) unsubscribed += 1;
-          else manual += 1;
+          if (response.ok) {
+            unsubscribed += 1;
+            groupUnsubscribed = true;
+          } else {
+            manual += 1;
+            groupManual = true;
+          }
         } else {
           manual += 1;
+          groupManual = true;
         }
       }
     }
 
+    let groupTrashed = 0;
     if (payload.action === "unsubscribe_and_trash") {
       for (const messageId of (group.messageIds ?? []).slice(0, 500)) {
         const response = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}/trash`,
           { method: "POST", headers: auth },
         );
-        if (response.ok) trashed += 1;
+        if (response.ok) {
+          trashed += 1;
+          groupTrashed += 1;
+        }
       }
+    }
+
+    if (group.id && group.name && group.domain) {
+      const now = Date.now();
+      const record = {
+        id: `${session.email}:${group.id}`,
+        accountEmail: session.email,
+        provider: "gmail",
+        senderEmail: group.id,
+        senderName: group.name,
+        senderDomain: group.domain,
+        status: (groupUnsubscribed ? "verifying" : "manual") as "verifying" | "manual",
+        requestedAt: now,
+        updatedAt: now,
+        lastSeenAt: null,
+        messagesTrashed: groupTrashed,
+      };
+      await getDb()
+        .insert(unsubscribeHistory)
+        .values(record)
+        .onConflictDoUpdate({
+          target: [unsubscribeHistory.accountEmail, unsubscribeHistory.senderEmail],
+          set: {
+            senderName: record.senderName,
+            senderDomain: record.senderDomain,
+            status: groupManual ? "manual" : record.status,
+            requestedAt: now,
+            updatedAt: now,
+            lastSeenAt: null,
+            messagesTrashed: record.messagesTrashed,
+          },
+        });
     }
   }
 

@@ -132,6 +132,35 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
 .loader { width: 19px; height: 19px; border: 2px solid #e3ddff; border-top-color: var(--purple); border-radius: 50%; animation: spin .8s linear infinite; }
 .action-bar button:disabled { opacity: .6; cursor: wait; }
 .toast { position: fixed; right: 24px; bottom: 24px; background: #20273a; color: white; padding: 13px 17px; border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.2); font-size: 11px; z-index: 10; animation: slidein .25s ease; }
+.history-heading { align-items: center; }
+.refresh-button { border: 1px solid #ded8fa; background: white; color: var(--purple); border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 650; cursor: pointer; }
+.refresh-button:hover { background: var(--purple-soft); }
+.refresh-button:disabled { opacity: .6; cursor: wait; }
+.refresh-button svg { width: 16px; }
+.history-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+.history-summary article { background: white; border: 1px solid var(--line); border-radius: 13px; padding: 17px 19px; }
+.history-summary strong, .history-summary span { display: block; }
+.history-summary strong { font-size: 25px; letter-spacing: -1px; }
+.history-summary span { color: #7d8798; font-size: 9px; margin-top: 4px; }
+.history-panel { background: white; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; min-height: 260px; }
+.history-row { display: grid; grid-template-columns: 40px minmax(150px, 1.5fr) 1fr .8fr minmax(180px, 1.3fr); align-items: center; gap: 12px; padding: 15px 18px; border-bottom: 1px solid #eff0f4; }
+.history-row:last-child { border-bottom: 0; }
+.history-avatar { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--purple-soft); color: var(--purple); font-size: 10px; font-weight: 750; }
+.history-sender strong, .history-sender small, .history-date strong, .history-date small, .history-trash strong, .history-trash small, .history-status b, .history-status small { display: block; }
+.history-sender strong { font-size: 11px; margin-bottom: 4px; }
+.history-sender small, .history-date small, .history-trash small { color: #929aa8; font-size: 8px; }
+.history-date strong, .history-trash strong { font-size: 9px; margin-top: 4px; }
+.history-status { border-radius: 9px; padding: 8px 10px; }
+.history-status b { font-size: 9px; margin-bottom: 3px; }
+.history-status small { font-size: 7px; line-height: 1.35; }
+.history-status.verifying { background: #fff5e7; color: #a96d24; }
+.history-status.confirmed { background: #eaf9f1; color: #27835d; }
+.history-status.manual { background: #f2f3f6; color: #687284; }
+.history-status.failed { background: #fff0ef; color: #b3473f; }
+.history-empty { flex-direction: column; text-align: center; min-height: 320px; }
+.history-empty > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: var(--purple-soft); color: var(--purple); }
+.history-empty strong { color: var(--ink); font-size: 12px; }
+.history-empty p { margin: 0; font-size: 9px; }
 @keyframes slidein { from { transform: translateY(12px); opacity: 0; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -145,6 +174,8 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
   .side-nav button { padding: 11px; }
   .side-nav button svg { width: 20px; }
   .stats { grid-template-columns: 1fr; }
+  .history-row { grid-template-columns: 40px minmax(140px, 1.3fr) 1fr minmax(160px, 1.2fr); }
+  .history-trash { display: none; }
   .stats article { align-items: center; }
   .dash-header { align-items: flex-start; }
   .safety { min-width: auto; }
@@ -168,6 +199,13 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
   .dash-header { display: block; }
   .safety { display: none; }
   .stats { grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .history-summary { grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .history-summary article { padding: 12px; }
+  .history-summary strong { font-size: 20px; }
+  .history-row { grid-template-columns: 36px 1fr; padding: 13px; }
+  .history-date, .history-trash { display: none; }
+  .history-status { grid-column: 2; }
+  .history-heading .refresh-button { margin-top: 16px; }
   .stats article { padding: 11px; display: block; }
   .stat-icon { margin-bottom: 9px; width: 30px; height: 30px; }
   .stats strong { font-size: 19px; }

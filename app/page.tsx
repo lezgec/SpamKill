@@ -17,6 +17,17 @@ type Sender = {
   messageIds: string[];
   primaryMessageId: string;
 };
+type HistoryRecord = {
+  id: string;
+  senderEmail: string;
+  senderName: string;
+  senderDomain: string;
+  status: "verifying" | "confirmed" | "manual" | "failed";
+  requestedAt: number;
+  updatedAt: number;
+  lastSeenAt: number | null;
+  messagesTrashed: number;
+};
 
 const providers = {
   gmail: { name: "Gmail", email: "Cuenta de Google", mark: "M", tone: "gmail" },
@@ -48,6 +59,78 @@ function Icon({ name }: { name: "shield" | "search" | "spark" | "history" | "set
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }
 
+const historyStatus = {
+  verifying: { label: "Verificando", detail: "Esperando 7 días sin nuevos mensajes" },
+  confirmed: { label: "Confirmada", detail: "No llegaron mensajes nuevos" },
+  manual: { label: "Revisión manual", detail: "El remitente no admite confirmación automática" },
+  failed: { label: "Fallida", detail: "Llegó publicidad después de la solicitud" },
+} as const;
+
+function HistoryView({
+  records,
+  loading,
+  onRefresh,
+}: {
+  records: HistoryRecord[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <main className="dashboard">
+      <header className="dash-header history-heading">
+        <div>
+          <p className="breadcrumb">Gmail / Historial</p>
+          <h1>Seguimiento de desuscripciones.</h1>
+          <p>Comprobamos si cada remitente respeta tu solicitud después de siete días.</p>
+        </div>
+        <button className="refresh-button" onClick={onRefresh} disabled={loading}>
+          <Icon name="history" /> {loading ? "Comprobando..." : "Comprobar ahora"}
+        </button>
+      </header>
+      <section className="history-summary">
+        <article><strong>{records.length}</strong><span>Solicitudes registradas</span></article>
+        <article><strong>{records.filter((item) => item.status === "confirmed").length}</strong><span>Confirmadas</span></article>
+        <article><strong>{records.filter((item) => item.status === "failed").length}</strong><span>Fallidas</span></article>
+      </section>
+      <section className="history-panel">
+        {loading && <div className="loading-state"><span className="loader" /> Consultando el historial...</div>}
+        {!loading && records.length === 0 && (
+          <div className="empty-state history-empty">
+            <span><Icon name="history" /></span>
+            <strong>Aún no hay desuscripciones registradas</strong>
+            <p>Selecciona un remitente en Limpieza inteligente y pulsa Desuscribir.</p>
+          </div>
+        )}
+        {!loading && records.map((record) => {
+          const status = historyStatus[record.status];
+          return (
+            <article className="history-row" key={record.id}>
+              <span className="history-avatar">{record.senderName.slice(0, 2).toUpperCase()}</span>
+              <div className="history-sender">
+                <strong>{record.senderName}</strong>
+                <small>{record.senderDomain}</small>
+              </div>
+              <div className="history-date">
+                <small>Solicitud enviada</small>
+                <strong>{new Intl.DateTimeFormat("es", { day: "numeric", month: "short", year: "numeric" }).format(new Date(record.requestedAt))}</strong>
+              </div>
+              <div className="history-trash">
+                <small>Mensajes a papelera</small>
+                <strong>{record.messagesTrashed}</strong>
+              </div>
+              <div className={`history-status ${record.status}`}>
+                <b>{status.label}</b>
+                <small>{status.detail}</small>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+      <p className="footer-copy">La confirmación se basa en si el remitente vuelve a enviarte mensajes después de la solicitud.</p>
+    </main>
+  );
+}
+
 export default function Home() {
   const [provider, setProvider] = useState<Provider | null>(null);
   const [gmailEmail, setGmailEmail] = useState("");
@@ -55,6 +138,9 @@ export default function Home() {
   const [scanned, setScanned] = useState(195);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"cleanup" | "history">("cleanup");
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [filter, setFilter] = useState<Filter>("Todos");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
@@ -138,9 +224,31 @@ export default function Home() {
     setSelected([]);
     setGmailEmail("");
     setSenders(demoSenders);
+    setView("cleanup");
   };
 
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+
+  const loadHistory = async () => {
+    if (provider !== "gmail") {
+      setHistory([]);
+      setView("history");
+      return;
+    }
+    setView("history");
+    setHistoryLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/google/history");
+      const data = await response.json() as { history?: HistoryRecord[]; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el historial.");
+      setHistory(data.history ?? []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo cargar el historial.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const act = async (action: "unsubscribe" | "unsubscribe_and_trash") => {
     if (!selected.length || busy) return;
@@ -157,7 +265,13 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
-          groups: chosen.map(({ primaryMessageId, messageIds }) => ({ primaryMessageId, messageIds })),
+          groups: chosen.map(({ id, name, domain, primaryMessageId, messageIds }) => ({
+            id,
+            name,
+            domain,
+            primaryMessageId,
+            messageIds,
+          })),
         }),
       });
       const data = await response.json() as { unsubscribed?: number; manual?: number; trashed?: number; error?: string };
@@ -218,8 +332,8 @@ export default function Home() {
           <button aria-label="Cambiar cuenta" onClick={() => { setProvider(null); setSelected([]); }}><Icon name="chevron" /></button>
         </div>
         <nav className="side-nav">
-          <button className="active"><Icon name="spark" /> Limpieza inteligente <b>{senders.length}</b></button>
-          <button><Icon name="history" /> Historial</button>
+          <button className={view === "cleanup" ? "active" : ""} onClick={() => setView("cleanup")}><Icon name="spark" /> Limpieza inteligente <b>{senders.length}</b></button>
+          <button className={view === "history" ? "active" : ""} onClick={loadHistory}><Icon name="history" /> Historial</button>
           <button><Icon name="settings" /> Configuración</button>
         </nav>
         <div className="privacy-note">
@@ -230,6 +344,9 @@ export default function Home() {
         <button className="disconnect" onClick={disconnect}><Icon name="logout" /> Desconectar cuenta</button>
       </aside>
 
+      {view === "history" ? (
+        <HistoryView records={history} loading={historyLoading} onRefresh={loadHistory} />
+      ) : (
       <main className="dashboard">
         <header className="dash-header">
           <div>
@@ -284,6 +401,7 @@ export default function Home() {
         </section>
         <p className="footer-copy">SpamKill nunca elimina mensajes de forma permanente sin tu confirmación.</p>
       </main>
+      )}
       {notice && <div className="toast">✓ {notice}</div>}
     </div>
   );

@@ -3,6 +3,9 @@ import {
   googleApiError,
   jsonWithSession,
 } from "@/lib/google";
+import { and, eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { unsubscribeHistory } from "@/db/schema";
 
 type GmailHeader = { name: string; value: string };
 type GmailMessage = {
@@ -23,6 +26,7 @@ type SenderGroup = {
   unsub: boolean;
   messageIds: string[];
   primaryMessageId: string;
+  latestAt: number;
 };
 
 const palette = ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"];
@@ -104,6 +108,12 @@ export async function GET(request: Request) {
     if (existing) {
       existing.count += 1;
       existing.messageIds.push(message.id);
+      const receivedAt = Number(message.internalDate ?? 0);
+      if (receivedAt > existing.latestAt) {
+        existing.latestAt = receivedAt;
+        existing.last = formatDate(message.internalDate);
+        existing.primaryMessageId = message.id;
+      }
       continue;
     }
     const domain = sender.email.split("@")[1] ?? sender.email;
@@ -120,12 +130,43 @@ export async function GET(request: Request) {
       unsub: Boolean(header(message, "List-Unsubscribe")),
       messageIds: [message.id],
       primaryMessageId: message.id,
+      latestAt: Number(message.internalDate ?? 0),
     });
   }
 
   const groups = [...grouped.values()]
     .filter((group) => group.unsub || group.count >= 2)
     .sort((a, b) => b.count - a.count);
+
+  const db = getDb();
+  const history = await db
+    .select()
+    .from(unsubscribeHistory)
+    .where(eq(unsubscribeHistory.accountEmail, session.email));
+  const now = Date.now();
+  for (const record of history) {
+    const current = grouped.get(record.senderEmail);
+    let nextStatus = record.status;
+    let lastSeenAt = record.lastSeenAt;
+    if (current && current.latestAt > record.requestedAt + 5 * 60 * 1000) {
+      nextStatus = "failed";
+      lastSeenAt = current.latestAt;
+    } else if (
+      record.status === "verifying" &&
+      now - record.requestedAt >= 7 * 24 * 60 * 60 * 1000
+    ) {
+      nextStatus = "confirmed";
+    }
+    if (nextStatus !== record.status || lastSeenAt !== record.lastSeenAt) {
+      await db
+        .update(unsubscribeHistory)
+        .set({ status: nextStatus, lastSeenAt, updatedAt: now })
+        .where(and(
+          eq(unsubscribeHistory.accountEmail, session.email),
+          eq(unsubscribeHistory.senderEmail, record.senderEmail),
+        ));
+    }
+  }
   return jsonWithSession(
     {
       email: session.email,
