@@ -154,6 +154,21 @@ export function jsonWithSession(
   return new Response(JSON.stringify(payload), { status, headers });
 }
 
+export async function googleApiError(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  try {
+    const payload = (await response.json()) as {
+      error?: { message?: string };
+      error_description?: string;
+    };
+    return payload.error?.message ?? payload.error_description ?? `${fallback} (${response.status}).`;
+  } catch {
+    return `${fallback} (${response.status}).`;
+  }
+}
+
 export function randomState(): string {
   return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(24)));
 }

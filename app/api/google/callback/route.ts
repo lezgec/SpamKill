@@ -4,6 +4,7 @@ import {
   clearCookie,
   createCookie,
   encryptSession,
+  googleApiError,
   googleConfig,
   readCookie,
   type GoogleSession,
@@ -43,17 +44,19 @@ export async function GET(request: Request) {
       expires_in?: number;
     };
     const profileResponse = await fetch(
-      "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      "https://openidconnect.googleapis.com/v1/userinfo",
       { headers: { Authorization: `Bearer ${tokens.access_token}` } },
     );
-    if (!profileResponse.ok) throw new Error("No se pudo obtener el perfil de Gmail.");
-    const profile = (await profileResponse.json()) as { emailAddress: string };
+    if (!profileResponse.ok) {
+      throw new Error(await googleApiError(profileResponse, "No se pudo obtener el correo de Google"));
+    }
+    const profile = (await profileResponse.json()) as { email: string };
 
     const session: GoogleSession = {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000,
-      email: profile.emailAddress,
+      email: profile.email,
     };
 
     const headers = new Headers({

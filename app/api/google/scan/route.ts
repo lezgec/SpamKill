@@ -1,4 +1,8 @@
-import { authorizedGoogleSession, jsonWithSession } from "@/lib/google";
+import {
+  authorizedGoogleSession,
+  googleApiError,
+  jsonWithSession,
+} from "@/lib/google";
 
 type GmailHeader = { name: string; value: string };
 type GmailMessage = {
@@ -64,7 +68,11 @@ export async function GET(request: Request) {
   listUrl.searchParams.set("q", "newer_than:90d");
   const listResponse = await fetch(listUrl, { headers: auth });
   if (!listResponse.ok) {
-    return jsonWithSession({ error: "No se pudieron consultar los mensajes de Gmail." }, 502, setCookie);
+    return jsonWithSession(
+      { error: await googleApiError(listResponse, "No se pudieron consultar los mensajes de Gmail") },
+      502,
+      setCookie,
+    );
   }
   const list = (await listResponse.json()) as { messages?: Array<{ id: string }> };
   const ids = list.messages ?? [];
