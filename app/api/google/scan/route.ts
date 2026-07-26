@@ -1,22 +1,22 @@
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { gmailSyncState } from "@/db/schema";
+import {
+  categoryFor,
+  gmailHeader,
+  senderFrom,
+  type GmailMessage,
+} from "@/lib/gmail-index";
+import { replaceIndexedMessages } from "@/lib/gmail-index-store";
+import { verifyUnsubscribeHistory } from "@/lib/unsubscribe-history";
 import {
   authorizedGoogleSession,
   buildMailboxQuery,
   googleApiError,
   jsonWithSession,
+  rangeStartTimestamp,
   type ScanRange,
 } from "@/lib/google";
-import { and, eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { unsubscribeHistory } from "@/db/schema";
-
-type GmailHeader = { name: string; value: string };
-type GmailMessage = {
-  id: string;
-  internalDate?: string;
-  labelIds?: string[];
-  snippet?: string;
-  payload?: { headers?: GmailHeader[] };
-};
 
 type SenderGroup = {
   id: string;
@@ -33,42 +33,6 @@ type SenderGroup = {
 };
 
 const palette = ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"];
-
-function header(message: GmailMessage, name: string): string {
-  return message.payload?.headers?.find(
-    (item) => item.name.toLowerCase() === name.toLowerCase(),
-  )?.value ?? "";
-}
-
-function senderFrom(value: string) {
-  const match = value.match(/^(?:"?([^"<]+)"?\s*)?<([^>]+)>$/);
-  const email = (match?.[2] ?? value).trim().toLowerCase();
-  const name = (match?.[1] ?? email.split("@")[0] ?? email).trim();
-  return { email, name };
-}
-
-function categoryFor(message: GmailMessage, from: string): SenderGroup["category"] {
-  const unsubscribe = header(message, "List-Unsubscribe");
-  const precedence = header(message, "Precedence").toLowerCase();
-  const subject = header(message, "Subject");
-  const value = `${from} ${subject} ${message.snippet ?? ""} ${precedence}`.toLowerCase();
-  const labels = new Set(message.labelIds ?? []);
-  const transactional = /recibo|factura|pedido|orden|compra confirmada|confirmaci[oó]n|contrase[nñ]a|c[oó]digo|verificaci[oó]n|seguridad|env[ií]o|entrega|receipt|invoice|order|password|verification|security|shipped|delivered/.test(value);
-  const promotional = /oferta|descuento|promoci[oó]n|cup[oó]n|rebaja|ahorra|compra ahora|env[ií]o gratis|precio especial|solo hoy|última oportunidad|sale|discount|promo|coupon|save \d|shop now|free shipping|special price|limited time|deal|% off|temu|aliexpress/.test(value);
-  const editorial = /newsletter|bolet[ií]n|resumen|semanal|diario|novedades|noticias|digest|weekly|daily|insights|roundup/.test(value);
-
-  if (transactional && !promotional) return "Notificaciones";
-  if (labels.has("CATEGORY_PROMOTIONS") || promotional) {
-    return "Publicidad";
-  }
-  if (
-    labels.has("CATEGORY_UPDATES") ||
-    labels.has("CATEGORY_SOCIAL") ||
-    labels.has("CATEGORY_FORUMS")
-  ) return "Notificaciones";
-  if (editorial || unsubscribe || /bulk|list/.test(precedence)) return "Newsletters";
-  return "Notificaciones";
-}
 
 function formatDate(internalDate?: string): string {
   if (!internalDate) return "—";
@@ -101,19 +65,36 @@ export async function GET(request: Request) {
       setCookie,
     );
   }
+
+  const pageToken = requestUrl.searchParams.get("pageToken");
+  let syncStartHistoryId = requestUrl.searchParams.get("syncStartHistoryId");
+  if (!syncStartHistoryId || !/^\d+$/.test(syncStartHistoryId)) {
+    const profileResponse = await fetch(
+      "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      { headers: auth },
+    );
+    if (profileResponse.status === 429) {
+      return jsonWithSession(
+        { error: "Gmail alcanzó temporalmente su cuota por usuario.", retryAfter: 60 },
+        429,
+        setCookie,
+      );
+    }
+    if (profileResponse.ok) {
+      const profile = (await profileResponse.json()) as { historyId?: string };
+      syncStartHistoryId = profile.historyId ?? null;
+    }
+  }
+
   const listUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
   listUrl.searchParams.set("maxResults", "100");
   listUrl.searchParams.set("q", query);
-  const pageToken = requestUrl.searchParams.get("pageToken");
   if (pageToken) listUrl.searchParams.set("pageToken", pageToken);
   const listResponse = await fetch(listUrl, { headers: auth });
   if (!listResponse.ok) {
     if (listResponse.status === 429) {
       return jsonWithSession(
-        {
-          error: "Gmail alcanzó temporalmente su cuota por usuario.",
-          retryAfter: 60,
-        },
+        { error: "Gmail alcanzó temporalmente su cuota por usuario.", retryAfter: 60 },
         429,
         setCookie,
       );
@@ -152,25 +133,27 @@ export async function GET(request: Request) {
     }));
     if (results.some((item) => item.rateLimited)) {
       return jsonWithSession(
-        {
-          error: "Gmail alcanzó temporalmente su cuota por usuario.",
-          retryAfter: 60,
-        },
+        { error: "Gmail alcanzó temporalmente su cuota por usuario.", retryAfter: 60 },
         429,
         setCookie,
       );
     }
-    messages.push(...results.map((item) => item.message).filter((item): item is GmailMessage => Boolean(item)));
+    messages.push(...results
+      .map((item) => item.message)
+      .filter((item): item is GmailMessage => Boolean(item)));
   }
+
+  await replaceIndexedMessages(session.email, messages);
 
   const grouped = new Map<string, SenderGroup>();
   for (const message of messages) {
-    const fromValue = header(message, "From");
+    const fromValue = gmailHeader(message, "From");
     if (!fromValue) continue;
     const sender = senderFrom(fromValue);
     const existing = grouped.get(sender.email);
     if (existing) {
       existing.count += 1;
+      existing.unsub ||= Boolean(gmailHeader(message, "List-Unsubscribe"));
       const receivedAt = Number(message.internalDate ?? 0);
       if (receivedAt > existing.latestAt) {
         existing.latestAt = receivedAt;
@@ -190,51 +173,58 @@ export async function GET(request: Request) {
       color: palette[position % palette.length],
       initials: sender.name.slice(0, 2).toUpperCase(),
       last: formatDate(message.internalDate),
-      unsub: Boolean(header(message, "List-Unsubscribe")),
+      unsub: Boolean(gmailHeader(message, "List-Unsubscribe")),
       primaryMessageId: message.id,
       latestAt: Number(message.internalDate ?? 0),
     });
   }
 
-  const groups = [...grouped.values()]
-    .sort((a, b) => b.count - a.count);
-
-  const db = getDb();
-  const history = await db
-    .select()
-    .from(unsubscribeHistory)
-    .where(eq(unsubscribeHistory.accountEmail, session.email));
-  const now = Date.now();
-  for (const record of history) {
-    const current = grouped.get(record.senderEmail);
-    let nextStatus = record.status;
-    let lastSeenAt = record.lastSeenAt;
-    if (current && current.latestAt > record.requestedAt + 5 * 60 * 1000) {
-      nextStatus = "failed";
-      lastSeenAt = current.latestAt;
-    } else if (
-      record.status === "verifying" &&
-      now - record.requestedAt >= 7 * 24 * 60 * 60 * 1000
-    ) {
-      nextStatus = "confirmed";
-    }
-    if (nextStatus !== record.status || lastSeenAt !== record.lastSeenAt) {
-      await db
-        .update(unsubscribeHistory)
-        .set({ status: nextStatus, lastSeenAt, updatedAt: now })
-        .where(and(
-          eq(unsubscribeHistory.accountEmail, session.email),
-          eq(unsubscribeHistory.senderEmail, record.senderEmail),
-        ));
-    }
+  if (!list.nextPageToken) {
+    const db = getDb();
+    const now = Date.now();
+    const [existingState] = await db
+      .select()
+      .from(gmailSyncState)
+      .where(eq(gmailSyncState.accountEmail, session.email))
+      .limit(1);
+    const requestedCoverage = rangeStartTimestamp(
+      range,
+      requestUrl.searchParams.get("after"),
+    );
+    const coverageStartAt = existingState?.coverageStartAt == null
+      ? requestedCoverage
+      : Math.min(existingState.coverageStartAt, requestedCoverage);
+    const state = {
+      accountEmail: session.email,
+      historyId: syncStartHistoryId ?? existingState?.historyId ?? null,
+      coverageStartAt,
+      lastFullScanAt: now,
+      lastIncrementalSyncAt: existingState?.lastIncrementalSyncAt ?? null,
+      updatedAt: now,
+    };
+    await db
+      .insert(gmailSyncState)
+      .values(state)
+      .onConflictDoUpdate({
+        target: gmailSyncState.accountEmail,
+        set: {
+          historyId: state.historyId,
+          coverageStartAt: state.coverageStartAt,
+          lastFullScanAt: state.lastFullScanAt,
+          updatedAt: state.updatedAt,
+        },
+      });
+    await verifyUnsubscribeHistory(session.email);
   }
+
   return jsonWithSession(
     {
       email: session.email,
-      groups,
+      groups: [...grouped.values()].sort((a, b) => b.count - a.count),
       scanned: messages.length,
       nextPageToken: list.nextPageToken ?? null,
       resultSizeEstimate: list.resultSizeEstimate ?? messages.length,
+      syncStartHistoryId,
     },
     200,
     setCookie,

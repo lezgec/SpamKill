@@ -198,6 +198,7 @@ export default function Home() {
   const [customAfter, setCustomAfter] = useState("");
   const [customBefore, setCustomBefore] = useState("");
   const [quotaWait, setQuotaWait] = useState(0);
+  const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [detailSender, setDetailSender] = useState<Sender | null>(null);
   const [detailMessages, setDetailMessages] = useState<DetailMessage[]>([]);
   const [detailSelected, setDetailSelected] = useState<string[]>([]);
@@ -230,8 +231,10 @@ export default function Home() {
     setCustomOpen(range === "custom");
 
     let pageToken: string | null = null;
+    let syncStartHistoryId = "";
     let totalScanned = 0;
     let accumulated: Sender[] = [];
+    let completed = false;
     try {
       do {
         const url = new URL("/api/google/scan", window.location.origin);
@@ -239,6 +242,7 @@ export default function Home() {
         if (after) url.searchParams.set("after", after);
         if (before) url.searchParams.set("before", before);
         if (pageToken) url.searchParams.set("pageToken", pageToken);
+        if (syncStartHistoryId) url.searchParams.set("syncStartHistoryId", syncStartHistoryId);
         let response: Response;
         let data: {
           groups?: Sender[];
@@ -246,6 +250,7 @@ export default function Home() {
           scanned?: number;
           nextPageToken?: string | null;
           resultSizeEstimate?: number;
+          syncStartHistoryId?: string | null;
           retryAfter?: number;
           error?: string;
         };
@@ -265,17 +270,20 @@ export default function Home() {
         accumulated = mergeSenderPages(accumulated, data.groups ?? []);
         totalScanned += data.scanned ?? 0;
         pageToken = data.nextPageToken ?? null;
+        syncStartHistoryId = data.syncStartHistoryId ?? syncStartHistoryId;
         setSenders(accumulated);
         setGmailEmail(data.email ?? "");
         setScanned(totalScanned);
         setEstimate(data.resultSizeEstimate ?? totalScanned);
         if (pageToken) await pause(5000, controller.signal);
       } while (pageToken && !controller.signal.aborted);
+      completed = !controller.signal.aborted;
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       setError(reason instanceof Error ? reason.message : "No se pudo analizar Gmail.");
     } finally {
       if (scanAbortRef.current === controller) {
+        if (completed) setSyncedAt(Date.now());
         setLoading(false);
         setQuotaWait(0);
         scanAbortRef.current = null;
@@ -283,17 +291,95 @@ export default function Home() {
     }
   }, []);
 
+  const loadCachedRange = useCallback(async (
+    range: ScanRange,
+    after = "",
+    before = "",
+  ): Promise<boolean> => {
+    const url = new URL("/api/google/index", window.location.origin);
+    url.searchParams.set("range", range);
+    if (after) url.searchParams.set("after", after);
+    if (before) url.searchParams.set("before", before);
+    const response = await fetch(url);
+    const data = await response.json() as {
+      email?: string;
+      groups?: Sender[];
+      scanned?: number;
+      resultSizeEstimate?: number;
+      coverageComplete?: boolean;
+      syncedAt?: number | null;
+      error?: string;
+    };
+    if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el índice local.");
+    setGmailEmail(data.email ?? "");
+    setSenders(data.groups ?? []);
+    setScanned(data.scanned ?? 0);
+    setEstimate(data.resultSizeEstimate ?? data.scanned ?? 0);
+    setSyncedAt(data.syncedAt ?? null);
+    return Boolean(data.coverageComplete);
+  }, []);
+
+  const syncMailbox = useCallback(async (): Promise<boolean> => {
+    const response = await fetch("/api/google/sync", { method: "POST" });
+    const data = await response.json() as {
+      needsFullSync?: boolean;
+      syncedAt?: number;
+      retryAfter?: number;
+      error?: string;
+    };
+    if (!response.ok) {
+      if (response.status === 429) {
+        throw new Error("Mostramos el índice guardado. Gmail pidió una pausa antes de buscar cambios nuevos.");
+      }
+      throw new Error(data.error ?? "No se pudo sincronizar Gmail.");
+    }
+    if (data.syncedAt) setSyncedAt(data.syncedAt);
+    return Boolean(data.needsFullSync);
+  }, []);
+
+  const refreshRange = useCallback(async (
+    range: ScanRange,
+    after = "",
+    before = "",
+  ) => {
+    setError("");
+    setSelected([]);
+    setScanRange(range);
+    setCustomOpen(range === "custom");
+    try {
+      const coverageComplete = await loadCachedRange(range, after, before);
+      if (!coverageComplete) {
+        await runScan(range, after, before);
+        return;
+      }
+      const needsFullSync = await syncMailbox();
+      if (needsFullSync) {
+        await runScan(range, after, before);
+        return;
+      }
+      await loadCachedRange(range, after, before);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo actualizar Gmail.");
+    }
+  }, [loadCachedRange, runScan, syncMailbox]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("google_error")) setError(`Google: ${params.get("google_error")}`);
-    if (params.get("provider") === "gmail") setProvider("gmail");
+    const deferred = window.setTimeout(() => {
+      if (params.get("google_error")) setError(`Google: ${params.get("google_error")}`);
+      if (params.get("provider") === "gmail") setProvider("gmail");
+    }, 0);
+    return () => window.clearTimeout(deferred);
   }, []);
 
   useEffect(() => {
     if (provider !== "gmail") return;
-    runScan("90d");
-    return () => scanAbortRef.current?.abort();
-  }, [provider, runScan]);
+    const deferred = window.setTimeout(() => void refreshRange("90d"), 0);
+    return () => {
+      window.clearTimeout(deferred);
+      scanAbortRef.current?.abort();
+    };
+  }, [provider, refreshRange]);
 
   const rows = useMemo(() => senders.filter((sender) => {
     const matchesFilter = filter === "Todos" || sender.category === filter;
@@ -457,7 +543,12 @@ export default function Home() {
     setError("");
     try {
       if (refresh) {
-        await runScan("30d");
+        const needsFullSync = await syncMailbox();
+        if (needsFullSync) {
+          await runScan(scanRange, customAfter, customBefore);
+        } else {
+          await loadCachedRange(scanRange, customAfter, customBefore);
+        }
       }
       const response = await fetch("/api/google/history");
       const data = await response.json() as { history?: HistoryRecord[]; error?: string };
@@ -574,7 +665,7 @@ export default function Home() {
           <div>
             <p className="breadcrumb">{account.name} / Limpieza</p>
             <h1>{loading ? "Analizando tu bandeja..." : "Tu bandeja, bajo control."}</h1>
-            <p>{loading ? <>Procesados <strong>{scanned}</strong>{estimate ? ` de aproximadamente ${estimate}` : ""}. Puedes detener el análisis cuando quieras.</> : <>Encontramos <strong>{senders.reduce((total, sender) => total + sender.count, 0)} mensajes</strong> de {senders.length} remitentes para revisar.</>}</p>
+            <p>{loading ? <>Procesados <strong>{scanned}</strong>{estimate ? ` de aproximadamente ${estimate}` : ""}. Puedes detener el análisis cuando quieras.</> : <>Encontramos <strong>{senders.reduce((total, sender) => total + sender.count, 0)} mensajes</strong> de {senders.length} remitentes para revisar.{syncedAt ? ` Índice actualizado a las ${new Intl.DateTimeFormat("es", { hour: "2-digit", minute: "2-digit" }).format(new Date(syncedAt))}.` : ""}</>}</p>
           </div>
           <div className="safety"><span>●</span><div><strong>Modo seguro activo</strong><small>Los correos irán a la papelera</small></div></div>
         </header>
@@ -597,7 +688,7 @@ export default function Home() {
                 key={range}
                 className={scanRange === range ? "active" : ""}
                 disabled={loading}
-                onClick={() => { setCustomOpen(false); runScan(range); }}
+                onClick={() => refreshRange(range)}
               >
                 {rangeLabels[range]}
               </button>
@@ -614,7 +705,7 @@ export default function Home() {
             <div className="custom-dates">
               <label>Desde<input type="date" value={customAfter} onChange={(event) => setCustomAfter(event.target.value)} /></label>
               <label>Hasta<input type="date" value={customBefore} onChange={(event) => setCustomBefore(event.target.value)} /></label>
-              <button disabled={loading || !customAfter || !customBefore} onClick={() => runScan("custom", customAfter, customBefore)}>Analizar fechas</button>
+              <button disabled={loading || !customAfter || !customBefore} onClick={() => refreshRange("custom", customAfter, customBefore)}>Analizar fechas</button>
             </div>
           )}
           {loading && (

@@ -241,3 +241,13 @@ export function buildMailboxQuery({
   }
   return terms.join(" ");
 }
+
+export function rangeStartTimestamp(range: ScanRange, after?: string | null): number {
+  const now = Date.now();
+  if (range === "all") return 0;
+  if (range === "30d") return now - 30 * 24 * 60 * 60 * 1000;
+  if (range === "90d") return now - 90 * 24 * 60 * 60 * 1000;
+  if (range === "1y") return now - 365 * 24 * 60 * 60 * 1000;
+  if (range === "custom" && validDate(after)) return new Date(`${after}T00:00:00Z`).getTime();
+  return now;
+}

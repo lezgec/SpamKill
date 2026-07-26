@@ -7,6 +7,7 @@ import {
 } from "@/lib/google";
 import { getDb } from "@/db";
 import { unsubscribeHistory } from "@/db/schema";
+import { deleteIndexedMessageIds } from "@/lib/gmail-index-store";
 
 type ActionPayload = {
   action?: "unsubscribe" | "unsubscribe_and_trash" | "trash";
@@ -156,6 +157,7 @@ export async function POST(request: Request) {
         if (response.ok) {
           trashed += ids.length;
           groupTrashed += ids.length;
+          await deleteIndexedMessageIds(session.email, ids);
         }
       }
     }
