@@ -4,7 +4,7 @@ import { indexedMessages } from "@/db/schema";
 import { indexedMessageValues, type GmailMessage } from "@/lib/gmail-index";
 
 const DELETE_CHUNK_SIZE = 80;
-const INSERT_CHUNK_SIZE = 8;
+const INSERT_CHUNK_SIZE = 7;
 
 export async function deleteIndexedMessageIds(
   accountEmail: string,

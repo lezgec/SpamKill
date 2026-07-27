@@ -2,7 +2,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailSyncState } from "@/db/schema";
 import {
-  categoryFor,
+  classificationFor,
+  classificationReasonText,
   gmailHeader,
   senderFrom,
   type GmailMessage,
@@ -24,6 +25,13 @@ type SenderGroup = {
   domain: string;
   count: number;
   category: "Publicidad" | "Newsletters" | "Notificaciones";
+  detectedCategory: "Publicidad" | "Newsletters" | "Notificaciones";
+  detectedReason: string;
+  classificationReason: string;
+  confidence: "high" | "medium" | "low";
+  doubtful: boolean;
+  corrected: boolean;
+  safe: boolean;
   color: string;
   initials: string;
   last: string;
@@ -164,12 +172,21 @@ export async function GET(request: Request) {
     }
     const domain = sender.email.split("@")[1] ?? sender.email;
     const position = grouped.size;
+    const classification = classificationFor(message, fromValue);
+    const classificationReason = classificationReasonText(classification.reason);
     grouped.set(sender.email, {
       id: sender.email,
       name: sender.name,
       domain,
       count: 1,
-      category: categoryFor(message, fromValue),
+      category: classification.category,
+      detectedCategory: classification.category,
+      detectedReason: classificationReason,
+      classificationReason,
+      confidence: classification.confidence,
+      doubtful: classification.confidence === "low",
+      corrected: false,
+      safe: false,
       color: palette[position % palette.length],
       initials: sender.name.slice(0, 2).toUpperCase(),
       last: formatDate(message.internalDate),

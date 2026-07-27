@@ -15,6 +15,13 @@
       "when": 1785047560219,
       "tag": "0001_overconfident_micromax",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785138804625,
+      "tag": "0002_bizarre_captain_america",
+      "breakpoints": true
     }
   ]
 }

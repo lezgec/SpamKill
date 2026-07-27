@@ -9,6 +9,21 @@ export type GmailMessage = {
 };
 
 export type MessageCategory = "Publicidad" | "Newsletters" | "Notificaciones";
+export type ClassificationReason =
+  | "transactional_terms"
+  | "gmail_promotions"
+  | "promotional_terms"
+  | "gmail_categories"
+  | "editorial_terms"
+  | "unsubscribe_header"
+  | "no_signals"
+  | "legacy_classification";
+export type ClassificationConfidence = "high" | "medium" | "low";
+export type Classification = {
+  category: MessageCategory;
+  reason: ClassificationReason;
+  confidence: ClassificationConfidence;
+};
 
 export function gmailHeader(message: GmailMessage, name: string): string {
   return message.payload?.headers?.find(
@@ -23,7 +38,7 @@ export function senderFrom(value: string) {
   return { email, name };
 }
 
-export function categoryFor(message: GmailMessage, from: string): MessageCategory {
+export function classificationFor(message: GmailMessage, from: string): Classification {
   const unsubscribe = gmailHeader(message, "List-Unsubscribe");
   const precedence = gmailHeader(message, "Precedence").toLowerCase();
   const subject = gmailHeader(message, "Subject");
@@ -33,17 +48,50 @@ export function categoryFor(message: GmailMessage, from: string): MessageCategor
   const promotional = /oferta|descuento|promoci[oó]n|cup[oó]n|rebaja|ahorra|compra ahora|env[ií]o gratis|precio especial|solo hoy|última oportunidad|sale|discount|promo|coupon|save \d|shop now|free shipping|special price|limited time|deal|% off|temu|aliexpress/.test(value);
   const editorial = /newsletter|bolet[ií]n|resumen|semanal|diario|novedades|noticias|digest|weekly|daily|insights|roundup/.test(value);
 
-  if (transactional && !promotional) return "Notificaciones";
-  if (labels.has("CATEGORY_PROMOTIONS") || promotional) return "Publicidad";
-  if (labels.has("CATEGORY_UPDATES") || labels.has("CATEGORY_SOCIAL") || labels.has("CATEGORY_FORUMS")) return "Notificaciones";
-  if (editorial || unsubscribe || /bulk|list/.test(precedence)) return "Newsletters";
-  return "Notificaciones";
+  if (transactional && !promotional) {
+    return { category: "Notificaciones", reason: "transactional_terms", confidence: "high" };
+  }
+  if (labels.has("CATEGORY_PROMOTIONS")) {
+    return { category: "Publicidad", reason: "gmail_promotions", confidence: "high" };
+  }
+  if (promotional) {
+    return { category: "Publicidad", reason: "promotional_terms", confidence: "high" };
+  }
+  if (labels.has("CATEGORY_UPDATES") || labels.has("CATEGORY_SOCIAL") || labels.has("CATEGORY_FORUMS")) {
+    return { category: "Notificaciones", reason: "gmail_categories", confidence: "high" };
+  }
+  if (editorial) {
+    return { category: "Newsletters", reason: "editorial_terms", confidence: "high" };
+  }
+  if (unsubscribe || /bulk|list/.test(precedence)) {
+    return { category: "Newsletters", reason: "unsubscribe_header", confidence: "medium" };
+  }
+  return { category: "Notificaciones", reason: "no_signals", confidence: "low" };
+}
+
+export function categoryFor(message: GmailMessage, from: string): MessageCategory {
+  return classificationFor(message, from).category;
+}
+
+export function classificationReasonText(reason: ClassificationReason): string {
+  const labels: Record<ClassificationReason, string> = {
+    transactional_terms: "Detectamos señales de recibo, pedido, seguridad o entrega.",
+    gmail_promotions: "Gmail colocó estos mensajes en su categoría Promociones.",
+    promotional_terms: "Detectamos ofertas, descuentos u otras frases comerciales.",
+    gmail_categories: "Gmail los identificó como actualizaciones, mensajes sociales o foros.",
+    editorial_terms: "Detectamos señales editoriales como newsletter, boletín o resumen.",
+    unsubscribe_header: "El remitente incluye un encabezado para cancelar la suscripción.",
+    no_signals: "No encontramos señales suficientes; conviene revisar esta clasificación.",
+    legacy_classification: "Conservamos la clasificación del análisis anterior; puedes corregirla si hace falta.",
+  };
+  return labels[reason];
 }
 
 export function indexedMessageValues(accountEmail: string, message: GmailMessage) {
   const fromValue = gmailHeader(message, "From");
   if (!fromValue) return null;
   const sender = senderFrom(fromValue);
+  const classification = classificationFor(message, fromValue);
   return {
     id: `${accountEmail}:${message.id}`,
     accountEmail,
@@ -53,7 +101,9 @@ export function indexedMessageValues(accountEmail: string, message: GmailMessage
     senderDomain: sender.email.split("@")[1] ?? sender.email,
     subject: gmailHeader(message, "Subject"),
     snippet: message.snippet ?? "",
-    category: categoryFor(message, fromValue),
+    category: classification.category,
+    classificationReason: classification.reason,
+    classificationConfidence: classification.confidence,
     receivedAt: Number(message.internalDate ?? 0),
     hasUnsubscribe: Boolean(gmailHeader(message, "List-Unsubscribe")),
     indexedAt: Date.now(),

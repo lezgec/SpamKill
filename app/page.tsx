@@ -3,14 +3,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Provider = "gmail" | "outlook" | "icloud";
-type Filter = "Todos" | "Publicidad" | "Newsletters" | "Notificaciones";
+type Category = "Publicidad" | "Newsletters" | "Notificaciones";
+type Filter = "Todos" | Category | "Dudosos" | "Seguros";
 type ScanRange = "all" | "30d" | "90d" | "1y" | "custom";
 type Sender = {
   id: string;
   name: string;
   domain: string;
   count: number;
-  category: Exclude<Filter, "Todos">;
+  category: Category;
+  detectedCategory?: Category;
+  detectedReason?: string;
+  classificationReason?: string;
+  confidence?: "high" | "medium" | "low";
+  doubtful?: boolean;
+  corrected?: boolean;
+  safe?: boolean;
   color: string;
   initials: string;
   last: string;
@@ -50,6 +58,7 @@ const rangeLabels: Record<ScanRange, string> = {
   "1y": "Último año",
   custom: "Fechas personalizadas",
 };
+const categoryOptions: Category[] = ["Publicidad", "Newsletters", "Notificaciones"];
 
 const demoSenders: Sender[] = [
   { id: "temu", name: "Temu", domain: "mail.temu.com", count: 84, category: "Publicidad", color: "#f2612f", initials: "T", last: "Hoy", unsub: true, primaryMessageId: "", latestAt: 0 },
@@ -97,6 +106,13 @@ function mergeSenderPages(current: Sender[], incoming: Sender[]): Sender[] {
       existing.last = sender.last;
       existing.primaryMessageId = sender.primaryMessageId;
       existing.category = sender.category;
+      existing.detectedCategory = sender.detectedCategory;
+      existing.detectedReason = sender.detectedReason;
+      existing.classificationReason = sender.classificationReason;
+      existing.confidence = sender.confidence;
+      existing.doubtful = sender.doubtful;
+      existing.corrected = sender.corrected;
+      existing.safe = sender.safe;
     }
   }
   return [...grouped.values()].sort((a, b) => b.count - a.count);
@@ -206,6 +222,7 @@ export default function Home() {
   const [detailEstimate, setDetailEstimate] = useState(0);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
+  const [preferenceBusy, setPreferenceBusy] = useState<string | null>(null);
   const scanAbortRef = useRef<AbortController | null>(null);
 
   const showNotice = (message: string) => {
@@ -350,11 +367,13 @@ export default function Home() {
       const coverageComplete = await loadCachedRange(range, after, before);
       if (!coverageComplete) {
         await runScan(range, after, before);
+        await loadCachedRange(range, after, before);
         return;
       }
       const needsFullSync = await syncMailbox();
       if (needsFullSync) {
         await runScan(range, after, before);
+        await loadCachedRange(range, after, before);
         return;
       }
       await loadCachedRange(range, after, before);
@@ -382,10 +401,13 @@ export default function Home() {
   }, [provider, refreshRange]);
 
   const rows = useMemo(() => senders.filter((sender) => {
-    const matchesFilter = filter === "Todos" || sender.category === filter;
+    const matchesFilter = filter === "Todos" ||
+      (filter === "Dudosos" ? Boolean(sender.doubtful) :
+        filter === "Seguros" ? Boolean(sender.safe) : sender.category === filter);
     const matchesQuery = `${sender.name} ${sender.domain}`.toLowerCase().includes(query.toLowerCase());
     return matchesFilter && matchesQuery;
   }), [filter, query, senders]);
+  const selectableRows = rows.filter((sender) => !sender.safe);
 
   const chosen = senders.filter((sender) => selected.includes(sender.id));
   const chosenCount = chosen.reduce((total, sender) => total + sender.count, 0);
@@ -469,6 +491,56 @@ export default function Home() {
     setDetailPageToken(null);
     setDetailEstimate(0);
     loadSenderMessages(sender);
+  };
+
+  const saveSenderPreference = async (
+    sender: Sender,
+    category: Category | null,
+    safe: boolean,
+  ) => {
+    if (provider !== "gmail" || preferenceBusy) return;
+    setPreferenceBusy(sender.id);
+    setDetailError("");
+    try {
+      const response = await fetch("/api/google/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ senderEmail: sender.id, category, safe }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "No se pudo guardar la preferencia.");
+
+      const detectedCategory = sender.detectedCategory ?? sender.category;
+      const corrected = category !== null;
+      const nextCategory = safe ? "Notificaciones" : category ?? detectedCategory;
+      const nextSender: Sender = {
+        ...sender,
+        category: nextCategory,
+        classificationReason: safe
+          ? "Lo marcaste como remitente seguro; nunca se tratará como publicidad."
+          : corrected
+            ? `Corregiste este remitente como ${category}; recordaremos tu elección.`
+            : sender.detectedReason ?? "Volvimos a usar la detección automática.",
+        confidence: safe || corrected ? "high" : sender.confidence,
+        doubtful: safe || corrected ? false : sender.confidence === "low",
+        corrected,
+        safe,
+      };
+      setSenders((current) => current.map((item) => item.id === sender.id ? nextSender : item));
+      setDetailSender((current) => current?.id === sender.id ? nextSender : current);
+      if (safe) setSelected((current) => current.filter((id) => id !== sender.id));
+      showNotice(safe
+        ? `${sender.name} se añadió a remitentes seguros.`
+        : corrected
+          ? `Recordaremos que ${sender.name} es ${category}.`
+          : `Se restauró la detección automática para ${sender.name}.`);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "No se pudo guardar la preferencia.";
+      if (detailSender?.id === sender.id) setDetailError(message);
+      else setError(message);
+    } finally {
+      setPreferenceBusy(null);
+    }
   };
 
   const toggleDetail = (id: string) => {
@@ -720,13 +792,17 @@ export default function Home() {
         <section className="mail-panel">
           <div className="toolbar">
             <div className="filters">
-              {(["Todos", "Publicidad", "Newsletters", "Notificaciones"] as Filter[]).map((item) => <button key={item} onClick={() => setFilter(item)} className={filter === item ? "active" : ""}>{item}</button>)}
+              {(["Todos", "Publicidad", "Newsletters", "Notificaciones", "Dudosos", "Seguros"] as Filter[]).map((item) => (
+                <button key={item} onClick={() => setFilter(item)} className={filter === item ? "active" : ""}>
+                  {item}{item === "Dudosos" ? ` (${senders.filter((sender) => sender.doubtful).length})` : item === "Seguros" ? ` (${senders.filter((sender) => sender.safe).length})` : ""}
+                </button>
+              ))}
             </div>
             <label className="search"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar remitente..." /></label>
           </div>
 
           <div className="table-head">
-            <label><input type="checkbox" checked={rows.length > 0 && rows.every((row) => selected.includes(row.id))} onChange={() => setSelected(rows.every((row) => selected.includes(row.id)) ? [] : rows.map((row) => row.id))} /> Remitente</label>
+            <label><input type="checkbox" checked={selectableRows.length > 0 && selectableRows.every((row) => selected.includes(row.id))} onChange={() => setSelected(selectableRows.every((row) => selected.includes(row.id)) ? [] : selectableRows.map((row) => row.id))} /> Remitente</label>
             <span>Categoría</span><span>Mensajes</span><span>Último</span><span>Desuscripción</span>
           </div>
 
@@ -736,13 +812,26 @@ export default function Home() {
             {!loading && rows.map((sender) => (
               <div className={`sender-row ${selected.includes(sender.id) ? "selected" : ""}`} key={sender.id}>
                 <span className="sender-main">
-                  <input aria-label={`Seleccionar ${sender.name}`} type="checkbox" checked={selected.includes(sender.id)} onChange={() => toggle(sender.id)} />
+                  <input aria-label={`Seleccionar ${sender.name}`} title={sender.safe ? "Remitente protegido por la lista segura" : undefined} type="checkbox" disabled={sender.safe} checked={selected.includes(sender.id)} onChange={() => toggle(sender.id)} />
                   <button className="sender-open" onClick={() => openSender(sender)}>
                     <i style={{ background: sender.color }}>{sender.initials}</i>
                     <span><strong>{sender.name}</strong><small>{sender.domain} · Ver correos</small></span>
                   </button>
                 </span>
-                <span><b className={`tag ${sender.category.toLowerCase()}`}>{sender.category}</b></span>
+                <span className="category-control">
+                  <select
+                    aria-label={`Categoría de ${sender.name}`}
+                    className={`category-select ${sender.category.toLowerCase()}`}
+                    value={sender.category}
+                    disabled={provider !== "gmail" || preferenceBusy === sender.id}
+                    onChange={(event) => void saveSenderPreference(sender, event.target.value as Category, false)}
+                  >
+                    {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+                  </select>
+                  <small className={sender.doubtful ? "needs-review" : ""}>
+                    {sender.safe ? "Seguro" : sender.corrected ? "Corregida por ti" : sender.doubtful ? "Revisar" : "Automática"}
+                  </small>
+                </span>
                 <strong className="message-count">{sender.count}</strong>
                 <span className="last-date">{sender.last}</span>
                 <span className={sender.unsub ? "available" : "manual"}>{sender.unsub ? "✓ Disponible" : "Manual"}</span>
@@ -771,6 +860,51 @@ export default function Home() {
               </div>
               <button aria-label="Cerrar detalle" onClick={() => setDetailSender(null)}>×</button>
             </header>
+            <section className="classification-review">
+              <div className="classification-title">
+                <span>
+                  <small>Por qué aparece como</small>
+                  <strong>{detailSender.category}</strong>
+                </span>
+                <b className={detailSender.doubtful ? "confidence-low" : "confidence-ok"}>
+                  {detailSender.safe ? "Remitente seguro" : detailSender.corrected ? "Corregida por ti" : detailSender.doubtful ? "Clasificación dudosa" : `Confianza ${detailSender.confidence === "medium" ? "media" : "alta"}`}
+                </b>
+              </div>
+              <p>{detailSender.classificationReason ?? "Clasificación automática basada en las señales disponibles."}</p>
+              <div className="classification-actions">
+                <span>Corregir:</span>
+                {categoryOptions.map((category) => (
+                  <button
+                    key={category}
+                    className={detailSender.category === category && !detailSender.safe ? "active" : ""}
+                    disabled={preferenceBusy === detailSender.id}
+                    onClick={() => void saveSenderPreference(detailSender, category, false)}
+                  >
+                    {category}
+                  </button>
+                ))}
+                <button
+                  className={`safe-toggle ${detailSender.safe ? "active" : ""}`}
+                  disabled={preferenceBusy === detailSender.id}
+                  onClick={() => void saveSenderPreference(
+                    detailSender,
+                    detailSender.corrected ? detailSender.category : null,
+                    !detailSender.safe,
+                  )}
+                >
+                  {detailSender.safe ? "✓ Seguro" : "Marcar seguro"}
+                </button>
+                {(detailSender.corrected || detailSender.safe) && (
+                  <button
+                    className="reset-classification"
+                    disabled={preferenceBusy === detailSender.id}
+                    onClick={() => void saveSenderPreference(detailSender, null, false)}
+                  >
+                    Usar detección automática
+                  </button>
+                )}
+              </div>
+            </section>
             <div className="drawer-toolbar">
               <label>
                 <input

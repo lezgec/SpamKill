@@ -39,6 +39,21 @@ export const indexedMessages = sqliteTable(
     category: text("category", {
       enum: ["Publicidad", "Newsletters", "Notificaciones"],
     }).notNull(),
+    classificationReason: text("classification_reason", {
+      enum: [
+        "transactional_terms",
+        "gmail_promotions",
+        "promotional_terms",
+        "gmail_categories",
+        "editorial_terms",
+        "unsubscribe_header",
+        "no_signals",
+        "legacy_classification",
+      ],
+    }).notNull().default("no_signals"),
+    classificationConfidence: text("classification_confidence", {
+      enum: ["high", "medium", "low"],
+    }).notNull().default("low"),
     receivedAt: integer("received_at").notNull(),
     hasUnsubscribe: integer("has_unsubscribe", { mode: "boolean" })
       .notNull()
@@ -65,5 +80,26 @@ export const gmailSyncState = sqliteTable("gmail_sync_state", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+export const senderPreferences = sqliteTable(
+  "sender_preferences",
+  {
+    id: text("id").primaryKey(),
+    accountEmail: text("account_email").notNull(),
+    senderEmail: text("sender_email").notNull(),
+    manualCategory: text("manual_category", {
+      enum: ["Publicidad", "Newsletters", "Notificaciones"],
+    }),
+    isSafe: integer("is_safe", { mode: "boolean" }).notNull().default(false),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("sender_preference_account_sender_idx").on(
+      table.accountEmail,
+      table.senderEmail,
+    ),
+  ],
+);
+
 export type UnsubscribeHistory = typeof unsubscribeHistory.$inferSelect;
 export type IndexedMessage = typeof indexedMessages.$inferSelect;
+export type SenderPreference = typeof senderPreferences.$inferSelect;
