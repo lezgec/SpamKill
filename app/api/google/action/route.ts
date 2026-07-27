@@ -7,10 +7,10 @@ import {
 } from "@/lib/google";
 import { getDb } from "@/db";
 import { unsubscribeHistory } from "@/db/schema";
-import { deleteIndexedMessageIds } from "@/lib/gmail-index-store";
+import { setIndexedMessagesTrashed } from "@/lib/gmail-index-store";
 
 type ActionPayload = {
-  action?: "unsubscribe" | "unsubscribe_and_trash" | "trash";
+  action?: "unsubscribe" | "unsubscribe_and_trash" | "trash" | "restore";
   range?: ScanRange;
   after?: string;
   before?: string;
@@ -68,11 +68,16 @@ export async function POST(request: Request) {
   let unsubscribed = 0;
   let manual = 0;
   let trashed = 0;
+  let restored = 0;
+  const trashedGroups: Array<{ id: string; messageIds: string[] }> = [];
 
   for (const group of groups) {
     let groupUnsubscribed = false;
     let groupManual = false;
-    if (payload.action !== "trash" && group.primaryMessageId) {
+    if (
+      (payload.action === "unsubscribe" || payload.action === "unsubscribe_and_trash") &&
+      group.primaryMessageId
+    ) {
       const metadataUrl = new URL(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(group.primaryMessageId)}`,
       );
@@ -115,6 +120,7 @@ export async function POST(request: Request) {
     }
 
     let groupTrashed = 0;
+    const successfulTrashedIds: string[] = [];
     if (
       (payload.action === "unsubscribe_and_trash" || payload.action === "trash") &&
       group.id
@@ -138,7 +144,7 @@ export async function POST(request: Request) {
         (id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]+$/.test(id),
       );
       const messageIds = requestedIds.length
-        ? [...new Set(requestedIds)].slice(0, 5000)
+        ? [...new Set(requestedIds)]
         : await findMessageIds(session.accessToken, query);
       for (let index = 0; index < messageIds.length; index += 1000) {
         const ids = messageIds.slice(index, index + 1000);
@@ -157,12 +163,44 @@ export async function POST(request: Request) {
         if (response.ok) {
           trashed += ids.length;
           groupTrashed += ids.length;
-          await deleteIndexedMessageIds(session.email, ids);
+          successfulTrashedIds.push(...ids);
+          await setIndexedMessagesTrashed(session.email, ids, true);
+        }
+      }
+      if (successfulTrashedIds.length) {
+        trashedGroups.push({ id: group.id, messageIds: successfulTrashedIds });
+      }
+    }
+
+    if (payload.action === "restore") {
+      const messageIds = [...new Set((group.messageIds ?? []).filter(
+        (id): id is string => typeof id === "string" && /^[A-Za-z0-9_-]+$/.test(id),
+      ))];
+      for (let index = 0; index < messageIds.length; index += 1000) {
+        const ids = messageIds.slice(index, index + 1000);
+        const response = await fetch(
+          "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify",
+          {
+            method: "POST",
+            headers: { ...auth, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ids,
+              addLabelIds: ["INBOX"],
+              removeLabelIds: ["TRASH"],
+            }),
+          },
+        );
+        if (response.ok) {
+          restored += ids.length;
+          await setIndexedMessagesTrashed(session.email, ids, false);
         }
       }
     }
 
-    if (payload.action !== "trash" && group.id && group.name && group.domain) {
+    if (
+      (payload.action === "unsubscribe" || payload.action === "unsubscribe_and_trash") &&
+      group.id && group.name && group.domain
+    ) {
       const now = Date.now();
       const record = {
         id: `${session.email}:${group.id}`,
@@ -195,5 +233,9 @@ export async function POST(request: Request) {
     }
   }
 
-  return jsonWithSession({ unsubscribed, manual, trashed }, 200, setCookie);
+  return jsonWithSession(
+    { unsubscribed, manual, trashed, restored, trashedGroups },
+    200,
+    setCookie,
+  );
 }

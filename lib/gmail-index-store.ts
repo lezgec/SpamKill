@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getD1, getDb } from "@/db";
 import { indexedMessages } from "@/db/schema";
 import { indexedMessageValues, type GmailMessage } from "@/lib/gmail-index";
 
@@ -19,6 +19,23 @@ export async function deleteIndexedMessageIds(
         eq(indexedMessages.accountEmail, accountEmail),
         inArray(indexedMessages.messageId, uniqueIds.slice(index, index + DELETE_CHUNK_SIZE)),
       ));
+  }
+}
+
+export async function setIndexedMessagesTrashed(
+  accountEmail: string,
+  messageIds: string[],
+  trashed: boolean,
+): Promise<void> {
+  const uniqueIds = [...new Set(messageIds)].filter(Boolean);
+  const db = getD1();
+  for (let index = 0; index < uniqueIds.length; index += DELETE_CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(index, index + DELETE_CHUNK_SIZE);
+    await db.batch(chunk.map((messageId) => db
+      .prepare(`UPDATE indexed_messages
+        SET trashed_at = ?
+        WHERE account_email = ? AND message_id = ?`)
+      .bind(trashed ? Date.now() : null, accountEmail, messageId)));
   }
 }
 

@@ -45,6 +45,16 @@ type DetailMessage = {
   receivedAt: number;
   hasUnsubscribe: boolean;
 };
+type TrashGroup = { id: string; messageIds: string[] };
+type PendingAction =
+  | { scope: "bulk"; action: "unsubscribe" | "unsubscribe_and_trash" }
+  | { scope: "detail"; action: "unsubscribe" | "trash" };
+type UndoState = {
+  groups: TrashGroup[];
+  senders: Sender[];
+  detailMessages: DetailMessage[];
+  detailSender: Sender | null;
+};
 
 const providers = {
   gmail: { name: "Gmail", email: "Cuenta de Google", mark: "M", tone: "gmail" },
@@ -223,11 +233,19 @@ export default function Home() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [preferenceBusy, setPreferenceBusy] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [undoState, setUndoState] = useState<UndoState | null>(null);
   const scanAbortRef = useRef<AbortController | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
 
-  const showNotice = (message: string) => {
+  const showNotice = (message: string, duration = 4200) => {
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
     setNotice(message);
-    window.setTimeout(() => setNotice(""), 4200);
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice("");
+      setUndoState(null);
+      noticeTimerRef.current = null;
+    }, duration);
   };
 
   const runScan = useCallback(async (
@@ -400,6 +418,10 @@ export default function Home() {
     };
   }, [provider, refreshRange]);
 
+  useEffect(() => () => {
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+  }, []);
+
   const rows = useMemo(() => senders.filter((sender) => {
     const matchesFilter = filter === "Todos" ||
       (filter === "Dudosos" ? Boolean(sender.doubtful) :
@@ -555,6 +577,12 @@ export default function Home() {
       setDetailError("Selecciona al menos un correo.");
       return;
     }
+    const undoSnapshot: UndoState = {
+      groups: [],
+      senders,
+      detailMessages,
+      detailSender,
+    };
     setBusy(true);
     setDetailError("");
     try {
@@ -579,6 +607,7 @@ export default function Home() {
         unsubscribed?: number;
         manual?: number;
         trashed?: number;
+        trashedGroups?: TrashGroup[];
         error?: string;
       };
       if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
@@ -590,7 +619,13 @@ export default function Home() {
             ? { ...sender, count: Math.max(0, sender.count - detailSelected.length) }
             : sender)
           .filter((sender) => sender.count > 0));
-        showNotice(`${data.trashed ?? 0} correos seleccionados enviados a la papelera.`);
+        if (data.trashedGroups?.length) {
+          setUndoState({ ...undoSnapshot, groups: data.trashedGroups });
+        }
+        showNotice(
+          `${data.trashed ?? 0} correos seleccionados enviados a la papelera.`,
+          data.trashedGroups?.length ? 12_000 : 4200,
+        );
         setDetailSelected([]);
       } else {
         showNotice(data.unsubscribed
@@ -640,37 +675,125 @@ export default function Home() {
       setSelected([]);
       return;
     }
+    const undoSnapshot: UndoState = {
+      groups: [],
+      senders,
+      detailMessages,
+      detailSender,
+    };
     setBusy(true);
     setError("");
+    const totals = { unsubscribed: 0, manual: 0, trashed: 0 };
+    const trashedGroups: TrashGroup[] = [];
+    const processedSenderIds: string[] = [];
     try {
-      const response = await fetch("/api/google/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action,
-          range: scanRange,
-          after: customAfter,
-          before: customBefore,
-          groups: chosen.map(({ id, name, domain, primaryMessageId }) => ({
-            id,
-            name,
-            domain,
-            primaryMessageId,
-          })),
-        }),
-      });
-      const data = await response.json() as { unsubscribed?: number; manual?: number; trashed?: number; error?: string };
-      if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
-      showNotice(`${data.unsubscribed ?? 0} desuscripciones completadas · ${data.trashed ?? 0} mensajes a la papelera${data.manual ? ` · ${data.manual} requieren revisión manual` : ""}`);
+      for (let index = 0; index < chosen.length; index += 20) {
+        const batch = chosen.slice(index, index + 20);
+        const response = await fetch("/api/google/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            range: scanRange,
+            after: customAfter,
+            before: customBefore,
+            groups: batch.map(({ id, name, domain, primaryMessageId }) => ({
+              id,
+              name,
+              domain,
+              primaryMessageId,
+            })),
+          }),
+        });
+        const data = await response.json() as { unsubscribed?: number; manual?: number; trashed?: number; trashedGroups?: TrashGroup[]; error?: string };
+        if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
+        totals.unsubscribed += data.unsubscribed ?? 0;
+        totals.manual += data.manual ?? 0;
+        totals.trashed += data.trashed ?? 0;
+        trashedGroups.push(...(data.trashedGroups ?? []));
+        processedSenderIds.push(...batch.map((sender) => sender.id));
+      }
+      if (action === "unsubscribe_and_trash" && trashedGroups.length) {
+        setUndoState({ ...undoSnapshot, groups: trashedGroups });
+      }
+      showNotice(
+        `${totals.unsubscribed} desuscripciones completadas · ${totals.trashed} mensajes a la papelera${totals.manual ? ` · ${totals.manual} requieren revisión manual` : ""}`,
+        action === "unsubscribe_and_trash" && trashedGroups.length ? 12_000 : 4200,
+      );
       if (action === "unsubscribe_and_trash") {
         setSenders((current) => current.filter((sender) => !selected.includes(sender.id)));
       }
       setSelected([]);
     } catch (reason) {
+      if (processedSenderIds.length) {
+        const processed = new Set(processedSenderIds);
+        if (action === "unsubscribe_and_trash") {
+          setSenders((current) => current.filter((sender) => !processed.has(sender.id)));
+          if (trashedGroups.length) setUndoState({ ...undoSnapshot, groups: trashedGroups });
+        }
+        setSelected((current) => current.filter((id) => !processed.has(id)));
+        showNotice(
+          `Se completaron ${processed.size} remitentes antes de la interrupción.`,
+          trashedGroups.length ? 12_000 : 4200,
+        );
+      }
       setError(reason instanceof Error ? reason.message : "No se pudo completar la acción.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const undoTrash = async () => {
+    if (!undoState || busy) return;
+    const snapshot = undoState;
+    if (noticeTimerRef.current) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+    const expected = snapshot.groups.reduce(
+      (total, group) => total + group.messageIds.length,
+      0,
+    );
+    setBusy(true);
+    try {
+      let restored = 0;
+      for (let index = 0; index < snapshot.groups.length; index += 20) {
+        const response = await fetch("/api/google/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "restore",
+            groups: snapshot.groups.slice(index, index + 20),
+          }),
+        });
+        const data = await response.json() as { restored?: number; error?: string };
+        if (!response.ok) throw new Error(data.error ?? "No se pudieron restaurar los correos.");
+        restored += data.restored ?? 0;
+      }
+      if (restored < expected) {
+        throw new Error(`Gmail solo pudo restaurar ${restored} de ${expected} correos.`);
+      }
+      setSenders(snapshot.senders);
+      setDetailMessages(snapshot.detailMessages);
+      setDetailSender(snapshot.detailSender);
+      setDetailSelected([]);
+      setSelected([]);
+      setUndoState(null);
+      showNotice(`${restored} correos restaurados en la bandeja de entrada.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudieron restaurar los correos.");
+      showNotice("No se pudo deshacer todavía. Puedes volver a intentarlo.", 12_000);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmPendingAction = () => {
+    if (!pendingAction || busy) return;
+    const request = pendingAction;
+    setPendingAction(null);
+    if (request.scope === "bulk") void act(request.action);
+    else void actDetail(request.action);
   };
 
   if (!provider) {
@@ -842,8 +965,8 @@ export default function Home() {
           {selected.length > 0 && (
             <div className="action-bar">
               <div><strong>{selected.length} remitentes seleccionados</strong><small>{chosenCount} mensajes afectados</small></div>
-              <button disabled={busy} className="unsubscribe" onClick={() => act("unsubscribe")}><Icon name="ban" /> {busy ? "Procesando..." : "Desuscribir"}</button>
-              <button disabled={busy} className="delete" onClick={() => act("unsubscribe_and_trash")}><Icon name="trash" /> Desuscribir y limpiar</button>
+              <button disabled={busy} className="unsubscribe" onClick={() => setPendingAction({ scope: "bulk", action: "unsubscribe" })}><Icon name="ban" /> {busy ? "Procesando..." : "Desuscribir"}</button>
+              <button disabled={busy} className="delete" onClick={() => setPendingAction({ scope: "bulk", action: "unsubscribe_and_trash" })}><Icon name="trash" /> Desuscribir y limpiar</button>
             </div>
           )}
         </section>
@@ -939,13 +1062,50 @@ export default function Home() {
               )}
             </div>
             <footer className="drawer-actions">
-              <button className="drawer-unsubscribe" disabled={busy} onClick={() => actDetail("unsubscribe")}><Icon name="ban" /> Desuscribir remitente</button>
-              <button className="drawer-trash" disabled={busy || !detailSelected.length} onClick={() => actDetail("trash")}><Icon name="trash" /> Mover seleccionados ({detailSelected.length})</button>
+              <button className="drawer-unsubscribe" disabled={busy} onClick={() => setPendingAction({ scope: "detail", action: "unsubscribe" })}><Icon name="ban" /> Desuscribir remitente</button>
+              <button className="drawer-trash" disabled={busy || !detailSelected.length} onClick={() => setPendingAction({ scope: "detail", action: "trash" })}><Icon name="trash" /> Mover seleccionados ({detailSelected.length})</button>
             </footer>
           </aside>
         </div>
       )}
-      {notice && <div className="toast">✓ {notice}</div>}
+      {pendingAction && (
+        <div className="confirm-backdrop" onMouseDown={() => !busy && setPendingAction(null)}>
+          <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onMouseDown={(event) => event.stopPropagation()}>
+            <span className="confirm-icon"><Icon name={pendingAction.action === "unsubscribe" ? "ban" : "trash"} /></span>
+            <h2 id="confirm-title">
+              {pendingAction.action === "unsubscribe"
+                ? "¿Desuscribir este contenido?"
+                : "¿Mover estos correos a la papelera?"}
+            </h2>
+            <p>
+              {pendingAction.scope === "bulk"
+                ? `${selected.length} remitentes y ${chosenCount} mensajes están seleccionados.`
+                : pendingAction.action === "trash"
+                  ? `${detailSelected.length} correos de ${detailSender?.name ?? "este remitente"} están seleccionados.`
+                  : `Se solicitará la desuscripción de ${detailSender?.name ?? "este remitente"}.`}
+            </p>
+            <div className="confirm-note">
+              {pendingAction.action === "unsubscribe"
+                ? "La solicitud de desuscripción no puede deshacerse."
+                : pendingAction.action === "unsubscribe_and_trash"
+                  ? "Podrás restaurar los correos durante unos segundos; la desuscripción no puede deshacerse."
+                  : "Nada se eliminará permanentemente y podrás deshacer esta acción durante unos segundos."}
+            </div>
+            <div className="confirm-actions">
+              <button className="confirm-cancel" disabled={busy} onClick={() => setPendingAction(null)}>Cancelar</button>
+              <button className="confirm-accept" disabled={busy} onClick={confirmPendingAction}>
+                {pendingAction.action === "unsubscribe" ? "Sí, desuscribir" : "Confirmar y mover"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {notice && (
+        <div className={`toast ${undoState ? "with-undo" : ""}`}>
+          <span>✓ {notice}</span>
+          {undoState && <button disabled={busy} onClick={() => void undoTrash()}>{busy ? "Restaurando..." : "Deshacer"}</button>}
+        </div>
+      )}
     </div>
   );
 }

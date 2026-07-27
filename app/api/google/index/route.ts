@@ -1,4 +1,4 @@
-import { and, count, eq, gte, lt, max, sql } from "drizzle-orm";
+import { and, count, eq, gte, isNull, lt, max, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { gmailSyncState, indexedMessages, senderPreferences } from "@/db/schema";
 import {
@@ -48,6 +48,7 @@ export async function GET(request: Request) {
   const startAt = rangeStartTimestamp(range, after);
   const conditions = [
     eq(indexedMessages.accountEmail, session.email),
+    isNull(indexedMessages.trashedAt),
     gte(indexedMessages.receivedAt, startAt),
   ];
   if (range === "custom" && before) {

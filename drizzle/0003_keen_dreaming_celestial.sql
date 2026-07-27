@@ -1,0 +1,1 @@
+ALTER TABLE `indexed_messages` ADD `trashed_at` integer;

@@ -160,7 +160,23 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
 .loading-state, .empty-state { min-height: 250px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #7f8898; font-size: 11px; }
 .loader { width: 19px; height: 19px; border: 2px solid #e3ddff; border-top-color: var(--purple); border-radius: 50%; animation: spin .8s linear infinite; }
 .action-bar button:disabled { opacity: .6; cursor: wait; }
-.toast { position: fixed; right: 24px; bottom: 24px; background: #20273a; color: white; padding: 13px 17px; border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.2); font-size: 11px; z-index: 10; animation: slidein .25s ease; }
+.toast { position: fixed; right: 24px; bottom: 24px; background: #20273a; color: white; padding: 13px 17px; border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.2); font-size: 11px; z-index: 50; animation: slidein .25s ease; display: flex; align-items: center; gap: 15px; max-width: min(520px, calc(100vw - 32px)); }
+.toast span { line-height: 1.4; }
+.toast button { border: 1px solid rgba(255,255,255,.28); background: rgba(255,255,255,.1); color: white; border-radius: 7px; padding: 7px 10px; font-size: 9px; font-weight: 700; cursor: pointer; flex: 0 0 auto; }
+.toast button:hover { background: rgba(255,255,255,.18); }
+.toast button:disabled { opacity: .65; cursor: wait; }
+.confirm-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px; background: rgba(18,23,36,.48); backdrop-filter: blur(3px); }
+.confirm-dialog { width: min(420px, 100%); background: white; border-radius: 16px; padding: 24px; box-shadow: 0 24px 70px rgba(18,23,36,.24); text-align: center; animation: confirm-in .18s ease; }
+.confirm-icon { width: 46px; height: 46px; margin: 0 auto 13px; border-radius: 13px; display: grid; place-items: center; color: var(--purple); background: var(--purple-soft); }
+.confirm-icon svg { width: 22px; }
+.confirm-dialog h2 { margin: 0 0 8px; font-size: 18px; letter-spacing: -.4px; }
+.confirm-dialog > p { margin: 0; color: #6f798a; font-size: 10px; line-height: 1.5; }
+.confirm-note { margin: 15px 0; border: 1px solid #ebe7fb; background: #faf9ff; color: #75678f; border-radius: 9px; padding: 10px 12px; font-size: 8px; line-height: 1.45; text-align: left; }
+.confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.confirm-actions button { border-radius: 9px; padding: 11px 12px; font-size: 9px; font-weight: 700; cursor: pointer; }
+.confirm-cancel { border: 1px solid var(--line); background: white; color: #697487; }
+.confirm-accept { border: 0; background: var(--purple); color: white; }
+.confirm-actions button:disabled { opacity: .6; cursor: wait; }
 .history-heading { align-items: center; }
 .refresh-button { border: 1px solid #ded8fa; background: white; color: var(--purple); border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 650; cursor: pointer; }
 .refresh-button:hover { background: var(--purple-soft); }
@@ -238,6 +254,7 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
 .drawer-unsubscribe { border: 1px solid #dcd6fa; color: var(--purple); background: white; }
 .drawer-trash { border: 0; background: var(--purple); color: white; }
 @keyframes slidein { from { transform: translateY(12px); opacity: 0; } }
+@keyframes confirm-in { from { transform: translateY(8px) scale(.98); opacity: .4; } }
 @keyframes drawerin { from { transform: translateX(40px); opacity: .5; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 

@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, lt } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNull, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { indexedMessages } from "@/db/schema";
 import {
@@ -35,6 +35,7 @@ export async function GET(request: Request) {
   const conditions = [
     eq(indexedMessages.accountEmail, session.email),
     eq(indexedMessages.senderEmail, sender),
+    isNull(indexedMessages.trashedAt),
     gte(indexedMessages.receivedAt, rangeStartTimestamp(range, after)),
   ];
   if (range === "custom" && before) {

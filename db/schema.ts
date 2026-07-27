@@ -59,6 +59,7 @@ export const indexedMessages = sqliteTable(
       .notNull()
       .default(false),
     indexedAt: integer("indexed_at").notNull(),
+    trashedAt: integer("trashed_at"),
   },
   (table) => [
     uniqueIndex("indexed_account_message_idx").on(table.accountEmail, table.messageId),
