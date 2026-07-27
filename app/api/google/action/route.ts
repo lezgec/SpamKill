@@ -2,6 +2,7 @@ import {
   authorizedGoogleSession,
   buildMailboxQuery,
   extractHttpsUnsubscribe,
+  extractManualUnsubscribeTarget,
   jsonWithSession,
   type ScanRange,
 } from "@/lib/google";
@@ -74,6 +75,7 @@ export async function POST(request: Request) {
   for (const group of groups) {
     let groupUnsubscribed = false;
     let groupManual = false;
+    let groupManualUrl: string | null = null;
     if (
       (payload.action === "unsubscribe" || payload.action === "unsubscribe_and_trash") &&
       group.primaryMessageId
@@ -97,7 +99,9 @@ export async function POST(request: Request) {
           header(headers, "List-Unsubscribe-Post"),
         );
         const dkimPassed = /dkim=pass/i.test(header(headers, "Authentication-Results"));
-        const unsubscribeUrl = extractHttpsUnsubscribe(header(headers, "List-Unsubscribe"));
+        const unsubscribeHeader = header(headers, "List-Unsubscribe");
+        const unsubscribeUrl = extractHttpsUnsubscribe(unsubscribeHeader);
+        const manualUrl = extractManualUnsubscribeTarget(unsubscribeHeader);
         if (oneClick && dkimPassed && unsubscribeUrl) {
           const response = await fetch(unsubscribeUrl, {
             method: "POST",
@@ -111,12 +115,20 @@ export async function POST(request: Request) {
           } else {
             manual += 1;
             groupManual = true;
+            groupManualUrl = manualUrl;
           }
         } else {
           manual += 1;
           groupManual = true;
+          groupManualUrl = manualUrl;
         }
+      } else {
+        manual += 1;
+        groupManual = true;
       }
+    } else if (payload.action === "unsubscribe" || payload.action === "unsubscribe_and_trash") {
+      manual += 1;
+      groupManual = true;
     }
 
     let groupTrashed = 0;
@@ -214,6 +226,7 @@ export async function POST(request: Request) {
         updatedAt: now,
         lastSeenAt: null,
         messagesTrashed: groupTrashed,
+        manualUrl: groupManualUrl,
       };
       await getDb()
         .insert(unsubscribeHistory)
@@ -228,6 +241,7 @@ export async function POST(request: Request) {
             updatedAt: now,
             lastSeenAt: null,
             messagesTrashed: record.messagesTrashed,
+            manualUrl: record.manualUrl,
           },
         });
     }

@@ -202,6 +202,9 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
 .history-status.confirmed { background: #eaf9f1; color: #27835d; }
 .history-status.manual { background: #f2f3f6; color: #687284; }
 .history-status.failed { background: #fff0ef; color: #b3473f; }
+.history-manual-link { display: inline-flex; align-items: center; gap: 2px; margin-top: 7px; color: #5b3fd0; font-size: 8px; font-weight: 750; line-height: 1.3; text-decoration: underline; text-underline-offset: 2px; }
+.history-manual-link:hover { color: #4328ad; }
+.history-manual-missing { margin-top: 6px; color: #858d9b; }
 .history-empty { flex-direction: column; text-align: center; min-height: 320px; }
 .history-empty > span { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: var(--purple-soft); color: var(--purple); }
 .history-empty strong { color: var(--ink); font-size: 12px; }

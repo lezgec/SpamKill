@@ -36,6 +36,7 @@ type HistoryRecord = {
   updatedAt: number;
   lastSeenAt: number | null;
   messagesTrashed: number;
+  manualUrl: string | null;
 };
 type DetailMessage = {
   id: string;
@@ -193,6 +194,24 @@ function HistoryView({
               <div className={`history-status ${record.status}`}>
                 <b>{status.label}</b>
                 <small>{status.detail}</small>
+                {record.status === "manual" && record.manualUrl && (
+                  <a
+                    className="history-manual-link"
+                    href={record.manualUrl}
+                    target={record.manualUrl.startsWith("mailto:") ? undefined : "_blank"}
+                    rel="noreferrer noopener"
+                  >
+                    {record.manualUrl.startsWith("mailto:")
+                      ? "Abrir solicitud por correo"
+                      : "Abrir página de desuscripción"}
+                    <span aria-hidden="true"> ↗</span>
+                  </a>
+                )}
+                {record.status === "manual" && !record.manualUrl && (
+                  <small className="history-manual-missing">
+                    Repite la solicitud para buscar un enlace seguro.
+                  </small>
+                )}
               </div>
             </article>
           );
@@ -630,7 +649,7 @@ export default function Home() {
       } else {
         showNotice(data.unsubscribed
           ? "El remitente aceptó la solicitud de desuscripción."
-          : "La desuscripción requiere revisión manual.");
+          : "La desuscripción requiere revisión manual. Abre el enlace desde Historial.");
       }
     } catch (reason) {
       setDetailError(reason instanceof Error ? reason.message : "No se pudo completar la acción.");
@@ -717,7 +736,7 @@ export default function Home() {
         setUndoState({ ...undoSnapshot, groups: trashedGroups });
       }
       showNotice(
-        `${totals.unsubscribed} desuscripciones completadas · ${totals.trashed} mensajes a la papelera${totals.manual ? ` · ${totals.manual} requieren revisión manual` : ""}`,
+        `${totals.unsubscribed} desuscripciones completadas · ${totals.trashed} mensajes a la papelera${totals.manual ? ` · ${totals.manual} requieren revisión manual; abre sus enlaces en Historial` : ""}`,
         action === "unsubscribe_and_trash" && trashedGroups.length ? 12_000 : 4200,
       );
       if (action === "unsubscribe_and_trash") {

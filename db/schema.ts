@@ -16,6 +16,7 @@ export const unsubscribeHistory = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
     lastSeenAt: integer("last_seen_at"),
     messagesTrashed: integer("messages_trashed").notNull().default(0),
+    manualUrl: text("manual_url"),
   },
   (table) => [
     uniqueIndex("unsubscribe_account_sender_idx").on(

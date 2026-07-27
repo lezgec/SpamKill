@@ -205,6 +205,40 @@ export function extractHttpsUnsubscribe(header: string): URL | null {
   return null;
 }
 
+function safeMailtoUnsubscribe(value: string): string | null {
+  if (value.length > 2_000 || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "mailto:") return null;
+    const recipient = decodeURIComponent(url.pathname).trim();
+    if (
+      recipient.length > 254 ||
+      !/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(recipient)
+    ) return null;
+
+    const target = new URL(`mailto:${url.pathname}`);
+    for (const field of ["subject", "body"] as const) {
+      const content = url.searchParams.get(field);
+      if (content && content.length <= 1_000) target.searchParams.set(field, content);
+    }
+    return target.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function extractManualUnsubscribeTarget(header: string): string | null {
+  const https = extractHttpsUnsubscribe(header);
+  if (https) return https.toString();
+
+  const matches = header.match(/<([^>]+)>/g) ?? [];
+  for (const match of matches) {
+    const mailto = safeMailtoUnsubscribe(match.slice(1, -1));
+    if (mailto) return mailto;
+  }
+  return null;
+}
+
 function validDate(value?: string | null): value is string {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
 }
