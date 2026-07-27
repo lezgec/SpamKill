@@ -227,6 +227,11 @@ function safeMailtoUnsubscribe(value: string): string | null {
   }
 }
 
+export function safeManualUnsubscribeTarget(value: string): string | null {
+  const https = safeUnsubscribeUrl(value);
+  return https?.toString() ?? safeMailtoUnsubscribe(value);
+}
+
 export function extractManualUnsubscribeTarget(header: string): string | null {
   const https = extractHttpsUnsubscribe(header);
   if (https) return https.toString();
@@ -235,6 +240,141 @@ export function extractManualUnsubscribeTarget(header: string): string | null {
   for (const match of matches) {
     const mailto = safeMailtoUnsubscribe(match.slice(1, -1));
     if (mailto) return mailto;
+  }
+  return null;
+}
+
+export type GmailMimePart = {
+  mimeType?: string;
+  headers?: Array<{ name: string; value: string }>;
+  body?: { data?: string; size?: number };
+  parts?: GmailMimePart[];
+};
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(
+    /&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt);/gi,
+    (entity, code: string) => {
+      const normalized = code.toLowerCase();
+      if (normalized === "amp") return "&";
+      if (normalized === "quot") return '"';
+      if (normalized === "apos") return "'";
+      if (normalized === "lt") return "<";
+      if (normalized === "gt") return ">";
+      const numeric = normalized.startsWith("#x")
+        ? Number.parseInt(normalized.slice(2), 16)
+        : Number.parseInt(normalized.slice(1), 10);
+      return Number.isFinite(numeric) && numeric > 0 && numeric <= 0x10ffff
+        ? String.fromCodePoint(numeric)
+        : entity;
+    },
+  );
+}
+
+function decodeGmailBody(data: string): string {
+  if (!data || data.length > 1_500_000) return "";
+  try {
+    const normalized = data.replaceAll("-", "+").replaceAll("_", "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return decoder.decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
+function unsubscribeScore(label: string, href: string, context = ""): number {
+  const explicit = /unsubscribe|opt[\s-]?out|cancelar\s+(?:la\s+)?suscripci[oó]n|darse\s+de\s+baja|desuscrib|dejar\s+de\s+recibir|no\s+recibir\s+m[aá]s/i;
+  const preferences = /manage\s+(?:email\s+)?preferences|subscription\s+preferences|preferencias\s+(?:de\s+)?(?:correo|comunicaci[oó]n|suscripci[oó]n)|gestionar\s+(?:mis\s+)?preferencias/i;
+  let score = 0;
+  if (explicit.test(label)) score += 12;
+  if (explicit.test(href)) score += 8;
+  if (explicit.test(context)) score += 5;
+  if (preferences.test(label)) score += 6;
+  if (preferences.test(href)) score += 4;
+  if (preferences.test(context)) score += 3;
+  if (href.toLowerCase().startsWith("https:")) score += 1;
+  return score;
+}
+
+function bestUnsubscribeTarget(content: string, html: boolean): string | null {
+  type Candidate = { url: string; score: number };
+  const candidates: Candidate[] = [];
+  const addCandidate = (rawHref: string, label: string, context = "") => {
+    const href = decodeHtmlEntities(rawHref.trim());
+    const url = safeManualUnsubscribeTarget(href);
+    if (!url) return;
+    const score = unsubscribeScore(label, href, context);
+    if (score >= 5) candidates.push({ url, score });
+  };
+
+  if (html) {
+    const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+    for (const match of content.matchAll(anchorPattern)) {
+      const attributes = match[1] ?? "";
+      const hrefMatch = attributes.match(
+        /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i,
+      );
+      const href = hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3];
+      if (!href) continue;
+      const accessibleLabel = attributes.match(
+        /\b(?:aria-label|title)\s*=\s*(?:"([^"]*)"|'([^']*)')/i,
+      );
+      const label = decodeHtmlEntities(
+        `${match[2].replace(/<[^>]*>/g, " ")} ${accessibleLabel?.[1] ?? accessibleLabel?.[2] ?? ""}`,
+      );
+      addCandidate(href, label);
+    }
+  }
+
+  const visibleText = decodeHtmlEntities(html ? content.replace(/<[^>]*>/g, " ") : content);
+  const urlPattern = /(?:https:\/\/[^\s<>"']+|mailto:[^\s<>"']+)/gi;
+  for (const match of content.matchAll(urlPattern)) {
+    const rawHref = match[0].replace(/[),.;]+$/, "");
+    const start = Math.max(0, match.index - 140);
+    const end = Math.min(content.length, match.index + match[0].length + 140);
+    addCandidate(rawHref, "", decodeHtmlEntities(content.slice(start, end).replace(/<[^>]*>/g, " ")));
+  }
+
+  if (!candidates.length && !html) {
+    for (const line of visibleText.split(/\r?\n/)) {
+      if (unsubscribeScore(line, "") >= 5) {
+        const address = line.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i)?.[0];
+        if (address) addCandidate(`mailto:${address}`, line);
+      }
+    }
+  }
+
+  candidates.sort((left, right) => right.score - left.score);
+  return candidates[0]?.url ?? null;
+}
+
+export function extractContentUnsubscribeTarget(payload?: GmailMimePart): string | null {
+  if (!payload) return null;
+  const parts: GmailMimePart[] = [payload];
+  const htmlBodies: string[] = [];
+  const textBodies: string[] = [];
+  let totalLength = 0;
+
+  while (parts.length && totalLength < 1_500_000) {
+    const part = parts.shift();
+    if (!part) continue;
+    parts.push(...(part.parts ?? []));
+    if (part.mimeType !== "text/html" && part.mimeType !== "text/plain") continue;
+    const content = decodeGmailBody(part.body?.data ?? "");
+    if (!content) continue;
+    totalLength += content.length;
+    (part.mimeType === "text/html" ? htmlBodies : textBodies).push(content);
+  }
+
+  for (const body of htmlBodies) {
+    const target = bestUnsubscribeTarget(body, true);
+    if (target) return target;
+  }
+  for (const body of textBodies) {
+    const target = bestUnsubscribeTarget(body, false);
+    if (target) return target;
   }
   return null;
 }

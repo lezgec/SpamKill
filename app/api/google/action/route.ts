@@ -1,9 +1,11 @@
 import {
   authorizedGoogleSession,
   buildMailboxQuery,
+  extractContentUnsubscribeTarget,
   extractHttpsUnsubscribe,
   extractManualUnsubscribeTarget,
   jsonWithSession,
+  type GmailMimePart,
   type ScanRange,
 } from "@/lib/google";
 import { getDb } from "@/db";
@@ -83,16 +85,11 @@ export async function POST(request: Request) {
       const metadataUrl = new URL(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(group.primaryMessageId)}`,
       );
-      metadataUrl.searchParams.set("format", "metadata");
-      for (const name of [
-        "List-Unsubscribe",
-        "List-Unsubscribe-Post",
-        "Authentication-Results",
-      ]) metadataUrl.searchParams.append("metadataHeaders", name);
+      metadataUrl.searchParams.set("format", "full");
       const metadataResponse = await fetch(metadataUrl, { headers: auth });
       if (metadataResponse.ok) {
         const message = (await metadataResponse.json()) as {
-          payload?: { headers?: GmailHeader[] };
+          payload?: GmailMimePart;
         };
         const headers = message.payload?.headers ?? [];
         const oneClick = /List-Unsubscribe=One-Click/i.test(
@@ -101,7 +98,8 @@ export async function POST(request: Request) {
         const dkimPassed = /dkim=pass/i.test(header(headers, "Authentication-Results"));
         const unsubscribeHeader = header(headers, "List-Unsubscribe");
         const unsubscribeUrl = extractHttpsUnsubscribe(unsubscribeHeader);
-        const manualUrl = extractManualUnsubscribeTarget(unsubscribeHeader);
+        const manualUrl = extractManualUnsubscribeTarget(unsubscribeHeader)
+          ?? extractContentUnsubscribeTarget(message.payload);
         if (oneClick && dkimPassed && unsubscribeUrl) {
           const response = await fetch(unsubscribeUrl, {
             method: "POST",

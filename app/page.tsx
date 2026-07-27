@@ -98,7 +98,7 @@ function Icon({ name }: { name: "shield" | "search" | "spark" | "history" | "set
 const historyStatus = {
   verifying: { label: "Verificando", detail: "Esperando 7 días sin nuevos mensajes" },
   confirmed: { label: "Confirmada", detail: "No llegaron mensajes nuevos" },
-  manual: { label: "Revisión manual", detail: "El remitente no admite confirmación automática" },
+  manual: { label: "Revisión manual", detail: "La baja requiere que completes el proceso desde el correo" },
   failed: { label: "Fallida", detail: "Llegó publicidad después de la solicitud" },
 } as const;
 
