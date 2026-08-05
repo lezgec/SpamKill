@@ -92,6 +92,25 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
+## Outlook OAuth
+
+Outlook uses its own session and Microsoft Graph permissions; it never shares
+the Gmail session. Configure these server-side variables before connecting an
+Outlook account:
+
+```env
+OUTLOOK_CLIENT_ID=your-microsoft-application-client-id
+OUTLOOK_CLIENT_SECRET=your-microsoft-application-client-secret
+```
+
+Register this redirect URI in Microsoft Entra ID:
+
+`https://spamkill-app.zamgarluer.chatgpt.site/api/outlook/callback`
+
+The app requests delegated `User.Read`, `Mail.ReadWrite` and `offline_access`
+permissions. The local development redirect uses the same path on the local
+origin.
+
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)

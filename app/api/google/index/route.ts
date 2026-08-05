@@ -73,6 +73,7 @@ export async function GET(request: Request) {
       gmailCategoriesCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'gmail_categories' THEN 1 ELSE 0 END)`,
       editorialCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'editorial_terms' THEN 1 ELSE 0 END)`,
       unsubscribeHeaderCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'unsubscribe_header' THEN 1 ELSE 0 END)`,
+      unsubscribeContentCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'unsubscribe_content' THEN 1 ELSE 0 END)`,
       noSignalsCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'no_signals' THEN 1 ELSE 0 END)`,
       legacyCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'legacy_classification' THEN 1 ELSE 0 END)`,
       latestAt: max(indexedMessages.receivedAt),
@@ -118,12 +119,13 @@ export async function GET(request: Request) {
       gmail_categories: row.gmailCategoriesCount,
       editorial_terms: row.editorialCount,
       unsubscribe_header: row.unsubscribeHeaderCount,
+      unsubscribe_content: row.unsubscribeContentCount,
       no_signals: row.noSignalsCount,
       legacy_classification: row.legacyCount,
     };
     const candidates: Record<MessageCategory, ClassificationReason[]> = {
       Publicidad: ["gmail_promotions", "promotional_terms"],
-      Newsletters: ["editorial_terms", "unsubscribe_header"],
+      Newsletters: ["editorial_terms", "unsubscribe_header", "unsubscribe_content"],
       Notificaciones: ["transactional_terms", "gmail_categories", "no_signals"],
     };
     const detectedReason = row.legacyCount >= Math.ceil(row.count / 2)
@@ -134,7 +136,7 @@ export async function GET(request: Request) {
     const autoDoubtful = dominantRatio < 0.6 || row.noSignalsCount >= Math.ceil(row.count / 2);
     const detectedConfidence: ClassificationConfidence = autoDoubtful
       ? "low"
-      : detectedReason === "unsubscribe_header" || detectedReason === "legacy_classification"
+      : detectedReason === "unsubscribe_header" || detectedReason === "unsubscribe_content" || detectedReason === "legacy_classification"
         ? "medium"
         : "high";
     const safe = Boolean(row.isSafe);

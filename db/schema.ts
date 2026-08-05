@@ -48,6 +48,7 @@ export const indexedMessages = sqliteTable(
         "gmail_categories",
         "editorial_terms",
         "unsubscribe_header",
+        "unsubscribe_content",
         "no_signals",
         "legacy_classification",
       ],

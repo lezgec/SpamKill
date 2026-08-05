@@ -59,7 +59,7 @@ type UndoState = {
 
 const providers = {
   gmail: { name: "Gmail", email: "Cuenta de Google", mark: "M", tone: "gmail" },
-  outlook: { name: "Outlook", email: "Próximamente", mark: "O", tone: "outlook" },
+  outlook: { name: "Outlook", email: "Cuenta de Microsoft", mark: "O", tone: "outlook" },
   icloud: { name: "iCloud", email: "Próximamente", mark: "●", tone: "icloud" },
 } as const;
 const rangeLabels: Record<ScanRange, string> = {
@@ -143,16 +143,18 @@ function HistoryView({
   records,
   loading,
   onRefresh,
+  providerName,
 }: {
   records: HistoryRecord[];
   loading: boolean;
   onRefresh: () => void;
+  providerName: string;
 }) {
   return (
     <main className="dashboard">
       <header className="dash-header history-heading">
         <div>
-          <p className="breadcrumb">Gmail / Historial</p>
+          <p className="breadcrumb">{providerName} / Historial</p>
           <h1>Seguimiento de desuscripciones.</h1>
           <p>Comprobamos si cada remitente respeta tu solicitud después de siete días.</p>
         </div>
@@ -225,6 +227,7 @@ function HistoryView({
 export default function Home() {
   const [provider, setProvider] = useState<Provider | null>(null);
   const [gmailEmail, setGmailEmail] = useState("");
+  const [outlookEmail, setOutlookEmail] = useState("");
   const [senders, setSenders] = useState<Sender[]>(demoSenders);
   const [scanned, setScanned] = useState(195);
   const [estimate, setEstimate] = useState(195);
@@ -272,6 +275,7 @@ export default function Home() {
     after = "",
     before = "",
   ) => {
+    const activeProvider = provider === "outlook" ? "outlook" : "gmail";
     scanAbortRef.current?.abort();
     const controller = new AbortController();
     scanAbortRef.current = controller;
@@ -291,7 +295,7 @@ export default function Home() {
     let completed = false;
     try {
       do {
-        const url = new URL("/api/google/scan", window.location.origin);
+        const url = new URL(`/api/${activeProvider}/scan`, window.location.origin);
         url.searchParams.set("range", range);
         if (after) url.searchParams.set("after", after);
         if (before) url.searchParams.set("before", before);
@@ -320,13 +324,14 @@ export default function Home() {
           }
           setQuotaWait(0);
         }
-        if (!response.ok) throw new Error(data.error ?? "No se pudo analizar Gmail.");
+        if (!response.ok) throw new Error(data.error ?? `No se pudo analizar ${providers[activeProvider].name}.`);
         accumulated = mergeSenderPages(accumulated, data.groups ?? []);
         totalScanned += data.scanned ?? 0;
         pageToken = data.nextPageToken ?? null;
         syncStartHistoryId = data.syncStartHistoryId ?? syncStartHistoryId;
         setSenders(accumulated);
-        setGmailEmail(data.email ?? "");
+        if (activeProvider === "gmail") setGmailEmail(data.email ?? "");
+        if (activeProvider === "outlook") setOutlookEmail(data.email ?? "");
         setScanned(totalScanned);
         setEstimate(data.resultSizeEstimate ?? totalScanned);
         if (pageToken) await pause(5000, controller.signal);
@@ -343,14 +348,14 @@ export default function Home() {
         scanAbortRef.current = null;
       }
     }
-  }, []);
+  }, [provider]);
 
   const loadCachedRange = useCallback(async (
     range: ScanRange,
     after = "",
     before = "",
   ): Promise<boolean> => {
-    const url = new URL("/api/google/index", window.location.origin);
+    const url = new URL(`/api/${provider}/index`, window.location.origin);
     url.searchParams.set("range", range);
     if (after) url.searchParams.set("after", after);
     if (before) url.searchParams.set("before", before);
@@ -365,13 +370,14 @@ export default function Home() {
       error?: string;
     };
     if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el índice local.");
-    setGmailEmail(data.email ?? "");
+    if (provider === "gmail") setGmailEmail(data.email ?? "");
+    if (provider === "outlook") setOutlookEmail(data.email ?? "");
     setSenders(data.groups ?? []);
     setScanned(data.scanned ?? 0);
     setEstimate(data.resultSizeEstimate ?? data.scanned ?? 0);
     setSyncedAt(data.syncedAt ?? null);
     return Boolean(data.coverageComplete);
-  }, []);
+  }, [provider]);
 
   const syncMailbox = useCallback(async (): Promise<boolean> => {
     const response = await fetch("/api/google/sync", { method: "POST" });
@@ -401,6 +407,10 @@ export default function Home() {
     setScanRange(range);
     setCustomOpen(range === "custom");
     try {
+      if (provider === "outlook") {
+        await runScan(range, after, before);
+        return;
+      }
       const coverageComplete = await loadCachedRange(range, after, before);
       if (!coverageComplete) {
         await runScan(range, after, before);
@@ -417,19 +427,21 @@ export default function Home() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "No se pudo actualizar Gmail.");
     }
-  }, [loadCachedRange, runScan, syncMailbox]);
+  }, [loadCachedRange, provider, runScan, syncMailbox]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const deferred = window.setTimeout(() => {
       if (params.get("google_error")) setError(`Google: ${params.get("google_error")}`);
+      if (params.get("outlook_error")) setError(`Outlook: ${params.get("outlook_error")}`);
       if (params.get("provider") === "gmail") setProvider("gmail");
+      if (params.get("provider") === "outlook") setProvider("outlook");
     }, 0);
     return () => window.clearTimeout(deferred);
   }, []);
 
   useEffect(() => {
-    if (provider !== "gmail") return;
+    if (provider !== "gmail" && provider !== "outlook") return;
     const deferred = window.setTimeout(() => void refreshRange("90d"), 0);
     return () => {
       window.clearTimeout(deferred);
@@ -457,7 +469,7 @@ export default function Home() {
 
   const chooseProvider = async (key: Provider) => {
     setError("");
-    if (key !== "gmail") {
+    if (key === "icloud") {
       setProvider(key);
       setSenders(demoSenders);
       setScanned(195);
@@ -466,26 +478,31 @@ export default function Home() {
     }
     setLoading(true);
     try {
-      const response = await fetch("/api/google/status");
-      const data = await response.json() as { connected: boolean; email?: string };
-      if (data.connected) {
-        setGmailEmail(data.email ?? "");
-        setProvider("gmail");
-      } else {
-        window.location.assign("/api/google/connect");
+      const response = await fetch(`/api/${key}/status`);
+      const data = await response.json() as { connected: boolean; configured?: boolean; email?: string; error?: string };
+      if (key === "outlook" && data.configured === false) {
+        throw new Error("Configura OUTLOOK_CLIENT_ID y OUTLOOK_CLIENT_SECRET para conectar Outlook.");
       }
-    } catch {
-      setError("No se pudo iniciar la conexión con Gmail.");
+      if (data.connected) {
+        if (key === "gmail") setGmailEmail(data.email ?? "");
+        if (key === "outlook") setOutlookEmail(data.email ?? "");
+        setProvider(key);
+      } else {
+        window.location.assign(`/api/${key}/connect`);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : key === "outlook" ? "No se pudo iniciar la conexión con Outlook." : "No se pudo iniciar la conexión con Gmail.");
       setLoading(false);
     }
   };
 
   const disconnect = async () => {
     scanAbortRef.current?.abort();
-    if (provider === "gmail") await fetch("/api/google/disconnect", { method: "POST" });
+    if (provider === "gmail" || provider === "outlook") await fetch(`/api/${provider}/disconnect`, { method: "POST" });
     setProvider(null);
     setSelected([]);
     setGmailEmail("");
+    setOutlookEmail("");
     setSenders(demoSenders);
     setView("cleanup");
   };
@@ -500,7 +517,7 @@ export default function Home() {
     setDetailLoading(true);
     setDetailError("");
     try {
-      const url = new URL("/api/google/messages", window.location.origin);
+      const url = new URL(`/api/${provider}/messages`, window.location.origin);
       url.searchParams.set("sender", sender.id);
       url.searchParams.set("range", scanRange);
       if (customAfter) url.searchParams.set("after", customAfter);
@@ -525,7 +542,7 @@ export default function Home() {
   };
 
   const openSender = (sender: Sender) => {
-    if (loading || provider !== "gmail") return;
+    if (loading || (provider !== "gmail" && provider !== "outlook")) return;
     setDetailSender(sender);
     setDetailMessages([]);
     setDetailSelected([]);
@@ -539,11 +556,11 @@ export default function Home() {
     category: Category | null,
     safe: boolean,
   ) => {
-    if (provider !== "gmail" || preferenceBusy) return;
+    if ((provider !== "gmail" && provider !== "outlook") || preferenceBusy) return;
     setPreferenceBusy(sender.id);
     setDetailError("");
     try {
-      const response = await fetch("/api/google/preferences", {
+      const response = await fetch(`/api/${provider}/preferences`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ senderEmail: sender.id, category, safe }),
@@ -605,7 +622,7 @@ export default function Home() {
     setBusy(true);
     setDetailError("");
     try {
-      const response = await fetch("/api/google/action", {
+      const response = await fetch(`/api/${provider}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -659,7 +676,7 @@ export default function Home() {
   };
 
   const loadHistory = async (refresh = false) => {
-    if (provider !== "gmail") {
+    if (provider !== "gmail" && provider !== "outlook") {
       setHistory([]);
       setView("history");
       return;
@@ -669,14 +686,18 @@ export default function Home() {
     setError("");
     try {
       if (refresh) {
-        const needsFullSync = await syncMailbox();
-        if (needsFullSync) {
+        if (provider === "outlook") {
           await runScan(scanRange, customAfter, customBefore);
         } else {
-          await loadCachedRange(scanRange, customAfter, customBefore);
+          const needsFullSync = await syncMailbox();
+          if (needsFullSync) {
+            await runScan(scanRange, customAfter, customBefore);
+          } else {
+            await loadCachedRange(scanRange, customAfter, customBefore);
+          }
         }
       }
-      const response = await fetch("/api/google/history");
+      const response = await fetch(`/api/${provider}/history`);
       const data = await response.json() as { history?: HistoryRecord[]; error?: string };
       if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el historial.");
       setHistory(data.history ?? []);
@@ -689,8 +710,8 @@ export default function Home() {
 
   const act = async (action: "unsubscribe" | "unsubscribe_and_trash") => {
     if (!selected.length || busy) return;
-    if (provider !== "gmail") {
-      showNotice(action === "unsubscribe" ? "Vista demostrativa: desuscripciones preparadas." : `${chosenCount} mensajes se moverían a la papelera.`);
+    if (provider === "icloud") {
+      showNotice(action === "unsubscribe" ? "Vista de iCloud preparada para la integración." : `${chosenCount} mensajes se moverían a la papelera.`);
       setSelected([]);
       return;
     }
@@ -708,7 +729,7 @@ export default function Home() {
     try {
       for (let index = 0; index < chosen.length; index += 20) {
         const batch = chosen.slice(index, index + 20);
-        const response = await fetch("/api/google/action", {
+        const response = await fetch(`/api/${provider}/action`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -777,7 +798,7 @@ export default function Home() {
     try {
       let restored = 0;
       for (let index = 0; index < snapshot.groups.length; index += 20) {
-        const response = await fetch("/api/google/action", {
+        const response = await fetch(`/api/${provider}/action`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -834,7 +855,7 @@ export default function Home() {
               return (
                 <button key={key} className={`provider-card ${item.tone}`} onClick={() => chooseProvider(key)} disabled={loading}>
                   <span className="provider-logo">{item.mark}</span>
-                  <span><strong>{loading && key === "gmail" ? "Conectando..." : `Continuar con ${item.name}`}</strong><small>{key === "gmail" ? "Conectar cuenta real de forma segura" : "Vista demostrativa — integración posterior"}</small></span>
+                  <span><strong>{loading && (key === "gmail" || key === "outlook") ? "Conectando..." : `Continuar con ${item.name}`}</strong><small>{key === "icloud" ? "Integración posterior" : "Conectar cuenta real de forma segura"}</small></span>
                   <Icon name="chevron" />
                 </button>
               );
@@ -847,7 +868,7 @@ export default function Home() {
   }
 
   const account = providers[provider];
-  const accountEmail = provider === "gmail" && gmailEmail ? gmailEmail : account.email;
+  const accountEmail = provider === "gmail" && gmailEmail ? gmailEmail : provider === "outlook" && outlookEmail ? outlookEmail : account.email;
 
   return (
     <div className="app-shell">
@@ -866,13 +887,13 @@ export default function Home() {
         <div className="privacy-note">
           <span><Icon name="shield" /></span>
           <strong>Privacidad primero</strong>
-          <p>Solo analizamos encabezados y datos necesarios para detectar suscripciones.</p>
+          <p>Analizamos encabezados y contenido necesario para detectar suscripciones.</p>
         </div>
         <button className="disconnect" onClick={disconnect}><Icon name="logout" /> Desconectar cuenta</button>
       </aside>
 
       {view === "history" ? (
-        <HistoryView records={history} loading={historyLoading} onRefresh={() => loadHistory(true)} />
+        <HistoryView records={history} loading={historyLoading} providerName={account.name} onRefresh={() => loadHistory(true)} />
       ) : (
       <main className="dashboard">
         <header className="dash-header">
@@ -894,7 +915,7 @@ export default function Home() {
         <section className="scope-panel">
           <div>
             <small>Periodo del análisis</small>
-            <strong>Elige qué parte de Gmail quieres revisar</strong>
+            <strong>Elige qué parte de {account.name} quieres revisar</strong>
           </div>
           <div className="scope-options">
             {(["all", "30d", "90d", "1y"] as ScanRange[]).map((range) => (
@@ -925,7 +946,7 @@ export default function Home() {
           {loading && (
             <div className="scan-progress">
               <span><i style={{ width: estimate ? `${Math.min(100, Math.round((scanned / estimate) * 100))}%` : "12%" }} /></span>
-              <small>{quotaWait ? `Gmail pidió una pausa: reintentando en ${quotaWait}s` : "Análisis pausado entre páginas para proteger la cuota"}</small>
+              <small>{quotaWait && provider === "gmail" ? `Gmail pidió una pausa: reintentando en ${quotaWait}s` : "Análisis pausado entre páginas para proteger la cuota"}</small>
               <button onClick={() => scanAbortRef.current?.abort()}>Detener análisis</button>
             </div>
           )}
@@ -965,7 +986,7 @@ export default function Home() {
                     aria-label={`Categoría de ${sender.name}`}
                     className={`category-select ${sender.category.toLowerCase()}`}
                     value={sender.category}
-                    disabled={provider !== "gmail" || preferenceBusy === sender.id}
+                    disabled={(provider !== "gmail" && provider !== "outlook") || preferenceBusy === sender.id}
                     onChange={(event) => void saveSenderPreference(sender, event.target.value as Category, false)}
                   >
                     {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}

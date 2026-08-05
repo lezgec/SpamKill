@@ -16,6 +16,7 @@ export type ClassificationReason =
   | "gmail_categories"
   | "editorial_terms"
   | "unsubscribe_header"
+  | "unsubscribe_content"
   | "no_signals"
   | "legacy_classification";
 export type ClassificationConfidence = "high" | "medium" | "low";
@@ -47,6 +48,7 @@ export function classificationFor(message: GmailMessage, from: string): Classifi
   const transactional = /recibo|factura|pedido|orden|compra confirmada|confirmaci[oó]n|contrase[nñ]a|c[oó]digo|verificaci[oó]n|seguridad|env[ií]o|entrega|receipt|invoice|order|password|verification|security|shipped|delivered/.test(value);
   const promotional = /oferta|descuento|promoci[oó]n|cup[oó]n|rebaja|ahorra|compra ahora|env[ií]o gratis|precio especial|solo hoy|última oportunidad|sale|discount|promo|coupon|save \d|shop now|free shipping|special price|limited time|deal|% off|temu|aliexpress/.test(value);
   const editorial = /newsletter|bolet[ií]n|resumen|semanal|diario|novedades|noticias|digest|weekly|daily|insights|roundup/.test(value);
+  const contentUnsubscribe = /unsubscribe|opt[\s-]?out|cancelar\s+(?:la\s+)?suscripci[oó]n|darse\s+de\s+baja|desuscrib|dejar\s+de\s+recibir|manage\s+(?:email\s+)?preferences|preferencias\s+(?:de\s+)?(?:correo|comunicaci[oó]n|suscripci[oó]n)/i.test(message.snippet ?? "");
 
   if (transactional && !promotional) {
     return { category: "Notificaciones", reason: "transactional_terms", confidence: "high" };
@@ -66,6 +68,9 @@ export function classificationFor(message: GmailMessage, from: string): Classifi
   if (unsubscribe || /bulk|list/.test(precedence)) {
     return { category: "Newsletters", reason: "unsubscribe_header", confidence: "medium" };
   }
+  if (contentUnsubscribe) {
+    return { category: "Newsletters", reason: "unsubscribe_content", confidence: "medium" };
+  }
   return { category: "Notificaciones", reason: "no_signals", confidence: "low" };
 }
 
@@ -81,6 +86,7 @@ export function classificationReasonText(reason: ClassificationReason): string {
     gmail_categories: "Gmail los identificó como actualizaciones, mensajes sociales o foros.",
     editorial_terms: "Detectamos señales editoriales como newsletter, boletín o resumen.",
     unsubscribe_header: "El remitente incluye un encabezado para cancelar la suscripción.",
+    unsubscribe_content: "El contenido incluye una opción para cancelar la suscripción.",
     no_signals: "No encontramos señales suficientes; conviene revisar esta clasificación.",
     legacy_classification: "Conservamos la clasificación del análisis anterior; puedes corregirla si hace falta.",
   };
@@ -105,7 +111,7 @@ export function indexedMessageValues(accountEmail: string, message: GmailMessage
     classificationReason: classification.reason,
     classificationConfidence: classification.confidence,
     receivedAt: Number(message.internalDate ?? 0),
-    hasUnsubscribe: Boolean(gmailHeader(message, "List-Unsubscribe")),
+    hasUnsubscribe: Boolean(gmailHeader(message, "List-Unsubscribe")) || /unsubscribe|opt[\s-]?out|cancelar\s+(?:la\s+)?suscripci[oó]n|darse\s+de\s+baja|desuscrib|dejar\s+de\s+recibir|manage\s+(?:email\s+)?preferences|preferencias\s+(?:de\s+)?(?:correo|comunicaci[oó]n|suscripci[oó]n)/i.test(message.snippet ?? ""),
     indexedAt: Date.now(),
   };
 }

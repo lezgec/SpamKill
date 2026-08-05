@@ -35,8 +35,9 @@ function bytesBuffer(value: Uint8Array): ArrayBuffer {
 function secretMaterial(): string {
   const value =
     process.env.APP_ENCRYPTION_KEY?.trim() ||
-    process.env.GOOGLE_CLIENT_SECRET?.trim();
-  if (!value) throw new Error("Falta APP_ENCRYPTION_KEY o GOOGLE_CLIENT_SECRET.");
+    process.env.GOOGLE_CLIENT_SECRET?.trim() ||
+    process.env.OUTLOOK_CLIENT_SECRET?.trim();
+  if (!value) throw new Error("Falta APP_ENCRYPTION_KEY o una credencial OAuth.");
   return value;
 }
 
@@ -350,6 +351,11 @@ function bestUnsubscribeTarget(content: string, html: boolean): string | null {
   return candidates[0]?.url ?? null;
 }
 
+export function extractContentUnsubscribeFromText(html = "", text = ""): string | null {
+  const htmlTarget = html ? bestUnsubscribeTarget(html, true) : null;
+  return htmlTarget ?? (text ? bestUnsubscribeTarget(text, false) : null);
+}
+
 export function extractContentUnsubscribeTarget(payload?: GmailMimePart): string | null {
   if (!payload) return null;
   const parts: GmailMimePart[] = [payload];
@@ -368,15 +374,7 @@ export function extractContentUnsubscribeTarget(payload?: GmailMimePart): string
     (part.mimeType === "text/html" ? htmlBodies : textBodies).push(content);
   }
 
-  for (const body of htmlBodies) {
-    const target = bestUnsubscribeTarget(body, true);
-    if (target) return target;
-  }
-  for (const body of textBodies) {
-    const target = bestUnsubscribeTarget(body, false);
-    if (target) return target;
-  }
-  return null;
+  return extractContentUnsubscribeFromText(htmlBodies.join("\n"), textBodies.join("\n"));
 }
 
 function validDate(value?: string | null): value is string {
