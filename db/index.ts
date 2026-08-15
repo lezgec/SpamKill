@@ -5,7 +5,7 @@ import * as schema from "./schema";
 export function getDb() {
   if (!env.DB) {
     throw new Error(
-      "Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database."
+      "Local D1 binding `DB` is unavailable. Start the app with `npm run dev` so Vinext can provide the local database binding.",
     );
   }
 
@@ -13,6 +13,6 @@ export function getDb() {
 }
 
 export function getD1() {
-  if (!env.DB) throw new Error("Cloudflare D1 binding `DB` is unavailable.");
+  if (!env.DB) throw new Error("Local D1 binding `DB` is unavailable.");
   return env.DB;
 }
