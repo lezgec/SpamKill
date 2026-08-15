@@ -1,1 +1,0 @@
-ALTER TABLE `unsubscribe_history` ADD `manual_url` text;
