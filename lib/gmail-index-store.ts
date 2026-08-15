@@ -1,9 +1,11 @@
-import { and, eq, inArray } from "drizzle-orm";
 import { getD1, getDb } from "@/db";
 import { indexedMessages } from "@/db/schema";
 import { indexedMessageValues, type GmailMessage } from "@/lib/gmail-index";
 
-const DELETE_CHUNK_SIZE = 80;
+// Keep each D1 batch small and use one prepared statement per message. Outlook
+// Graph IDs are long; a single IN (...) statement can become brittle even when
+// its parameter count is below D1's documented limit.
+const DELETE_BATCH_SIZE = 20;
 const INSERT_CHUNK_SIZE = 7;
 
 export async function deleteIndexedMessageIds(
@@ -11,14 +13,13 @@ export async function deleteIndexedMessageIds(
   messageIds: string[],
 ): Promise<void> {
   const uniqueIds = [...new Set(messageIds)].filter(Boolean);
-  const db = getDb();
-  for (let index = 0; index < uniqueIds.length; index += DELETE_CHUNK_SIZE) {
-    await db
-      .delete(indexedMessages)
-      .where(and(
-        eq(indexedMessages.accountEmail, accountEmail),
-        inArray(indexedMessages.messageId, uniqueIds.slice(index, index + DELETE_CHUNK_SIZE)),
-      ));
+  const db = getD1();
+  for (let index = 0; index < uniqueIds.length; index += DELETE_BATCH_SIZE) {
+    const chunk = uniqueIds.slice(index, index + DELETE_BATCH_SIZE);
+    await db.batch(chunk.map((messageId) => db
+      .prepare(`DELETE FROM indexed_messages
+        WHERE account_email = ? AND message_id = ?`)
+      .bind(accountEmail, messageId)));
   }
 }
 
@@ -29,8 +30,8 @@ export async function setIndexedMessagesTrashed(
 ): Promise<void> {
   const uniqueIds = [...new Set(messageIds)].filter(Boolean);
   const db = getD1();
-  for (let index = 0; index < uniqueIds.length; index += DELETE_CHUNK_SIZE) {
-    const chunk = uniqueIds.slice(index, index + DELETE_CHUNK_SIZE);
+  for (let index = 0; index < uniqueIds.length; index += DELETE_BATCH_SIZE) {
+    const chunk = uniqueIds.slice(index, index + DELETE_BATCH_SIZE);
     await db.batch(chunk.map((messageId) => db
       .prepare(`UPDATE indexed_messages
         SET trashed_at = ?
