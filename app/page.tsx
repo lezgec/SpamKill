@@ -71,6 +71,12 @@ const rangeLabels: Record<ScanRange, string> = {
 };
 const categoryOptions: Category[] = ["Publicidad", "Newsletters", "Notificaciones"];
 
+function mailApiPath(provider: Provider | null): "google" | "outlook" {
+  if (provider === "gmail") return "google";
+  if (provider === "outlook") return "outlook";
+  throw new Error("Selecciona una cuenta de correo.");
+}
+
 const demoSenders: Sender[] = [
   { id: "temu", name: "Temu", domain: "mail.temu.com", count: 84, category: "Publicidad", color: "#f2612f", initials: "T", last: "Hoy", unsub: true, primaryMessageId: "", latestAt: 0 },
   { id: "canva", name: "Canva", domain: "canva.com", count: 31, category: "Newsletters", color: "#7b61ff", initials: "CA", last: "Ayer", unsub: true, primaryMessageId: "", latestAt: 0 },
@@ -276,6 +282,7 @@ export default function Home() {
     before = "",
   ) => {
     const activeProvider = provider === "outlook" ? "outlook" : "gmail";
+    const apiPath = mailApiPath(activeProvider);
     scanAbortRef.current?.abort();
     const controller = new AbortController();
     scanAbortRef.current = controller;
@@ -295,7 +302,7 @@ export default function Home() {
     let completed = false;
     try {
       do {
-        const url = new URL(`/api/${activeProvider}/scan`, window.location.origin);
+        const url = new URL(`/api/${apiPath}/scan`, window.location.origin);
         url.searchParams.set("range", range);
         if (after) url.searchParams.set("after", after);
         if (before) url.searchParams.set("before", before);
@@ -355,7 +362,7 @@ export default function Home() {
     after = "",
     before = "",
   ): Promise<boolean> => {
-    const url = new URL(`/api/${provider}/index`, window.location.origin);
+    const url = new URL(`/api/${mailApiPath(provider)}/index`, window.location.origin);
     url.searchParams.set("range", range);
     if (after) url.searchParams.set("after", after);
     if (before) url.searchParams.set("before", before);
@@ -478,7 +485,8 @@ export default function Home() {
     }
     setLoading(true);
     try {
-      const response = await fetch(`/api/${key}/status`);
+      const apiPath = mailApiPath(key);
+      const response = await fetch(`/api/${apiPath}/status`);
       const data = await response.json() as { connected: boolean; configured?: boolean; email?: string; error?: string };
       if (key === "outlook" && data.configured === false) {
         throw new Error("Configura OUTLOOK_CLIENT_ID y OUTLOOK_CLIENT_SECRET para conectar Outlook.");
@@ -488,7 +496,7 @@ export default function Home() {
         if (key === "outlook") setOutlookEmail(data.email ?? "");
         setProvider(key);
       } else {
-        window.location.assign(`/api/${key}/connect`);
+        window.location.assign(`/api/${apiPath}/connect`);
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : key === "outlook" ? "No se pudo iniciar la conexión con Outlook." : "No se pudo iniciar la conexión con Gmail.");
@@ -498,7 +506,7 @@ export default function Home() {
 
   const disconnect = async () => {
     scanAbortRef.current?.abort();
-    if (provider === "gmail" || provider === "outlook") await fetch(`/api/${provider}/disconnect`, { method: "POST" });
+    if (provider === "gmail" || provider === "outlook") await fetch(`/api/${mailApiPath(provider)}/disconnect`, { method: "POST" });
     setProvider(null);
     setSelected([]);
     setGmailEmail("");
@@ -517,7 +525,7 @@ export default function Home() {
     setDetailLoading(true);
     setDetailError("");
     try {
-      const url = new URL(`/api/${provider}/messages`, window.location.origin);
+      const url = new URL(`/api/${mailApiPath(provider)}/messages`, window.location.origin);
       url.searchParams.set("sender", sender.id);
       url.searchParams.set("range", scanRange);
       if (customAfter) url.searchParams.set("after", customAfter);
@@ -560,7 +568,7 @@ export default function Home() {
     setPreferenceBusy(sender.id);
     setDetailError("");
     try {
-      const response = await fetch(`/api/${provider}/preferences`, {
+      const response = await fetch(`/api/${mailApiPath(provider)}/preferences`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ senderEmail: sender.id, category, safe }),
@@ -622,7 +630,7 @@ export default function Home() {
     setBusy(true);
     setDetailError("");
     try {
-      const response = await fetch(`/api/${provider}/action`, {
+      const response = await fetch(`/api/${mailApiPath(provider)}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -697,7 +705,7 @@ export default function Home() {
           }
         }
       }
-      const response = await fetch(`/api/${provider}/history`);
+      const response = await fetch(`/api/${mailApiPath(provider)}/history`);
       const data = await response.json() as { history?: HistoryRecord[]; error?: string };
       if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el historial.");
       setHistory(data.history ?? []);
@@ -729,7 +737,7 @@ export default function Home() {
     try {
       for (let index = 0; index < chosen.length; index += 20) {
         const batch = chosen.slice(index, index + 20);
-        const response = await fetch(`/api/${provider}/action`, {
+        const response = await fetch(`/api/${mailApiPath(provider)}/action`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -798,7 +806,7 @@ export default function Home() {
     try {
       let restored = 0;
       for (let index = 0; index < snapshot.groups.length; index += 20) {
-        const response = await fetch(`/api/${provider}/action`, {
+        const response = await fetch(`/api/${mailApiPath(provider)}/action`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

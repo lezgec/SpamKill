@@ -4,6 +4,7 @@ import { gmailSyncState } from "@/db/schema";
 import {
   classificationFor,
   classificationReasonText,
+  messageTimestamp,
   gmailHeader,
   senderFrom,
   type GmailMessage,
@@ -43,9 +44,11 @@ type SenderGroup = {
 const palette = ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"];
 
 function formatDate(internalDate?: string): string {
+  const timestamp = messageTimestamp(internalDate);
+  if (!timestamp) return "—";
   if (!internalDate) return "—";
   return new Intl.DateTimeFormat("es", { day: "numeric", month: "short" }).format(
-    new Date(Number(internalDate)),
+    new Date(timestamp),
   );
 }
 

@@ -48,6 +48,12 @@ type SenderGroup = {
 
 const palette = ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"];
 
+function outlookTimestamp(value?: string): number {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function outlookMessageToGmail(message: GraphMessage): GmailMessage {
   const fromAddress = message.from?.emailAddress?.address ?? "";
   const fromName = message.from?.emailAddress?.name ?? fromAddress;
@@ -60,7 +66,7 @@ function outlookMessageToGmail(message: GraphMessage): GmailMessage {
   }
   return {
     id: message.id,
-    internalDate: String(Date.parse(message.receivedDateTime ?? "")) || "0",
+    internalDate: String(outlookTimestamp(message.receivedDateTime)),
     snippet: message.bodyPreview ?? "",
     payload: { headers },
     labelIds: message.inferenceClassification === "other" ? ["CATEGORY_PROMOTIONS"] : [],
@@ -68,6 +74,8 @@ function outlookMessageToGmail(message: GraphMessage): GmailMessage {
 }
 
 function formatDate(value?: string): string {
+  const timestamp = value ? Date.parse(value) : NaN;
+  if (!Number.isFinite(timestamp)) return "—";
   if (!value) return "—";
   return new Intl.DateTimeFormat("es", { day: "numeric", month: "short" }).format(new Date(value));
 }

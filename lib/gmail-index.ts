@@ -93,6 +93,11 @@ export function classificationReasonText(reason: ClassificationReason): string {
   return labels[reason];
 }
 
+export function messageTimestamp(value?: string): number {
+  const timestamp = Number(value ?? 0);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+}
+
 export function indexedMessageValues(accountEmail: string, message: GmailMessage) {
   const fromValue = gmailHeader(message, "From");
   if (!fromValue) return null;
@@ -110,7 +115,7 @@ export function indexedMessageValues(accountEmail: string, message: GmailMessage
     category: classification.category,
     classificationReason: classification.reason,
     classificationConfidence: classification.confidence,
-    receivedAt: Number(message.internalDate ?? 0),
+    receivedAt: messageTimestamp(message.internalDate),
     hasUnsubscribe: Boolean(gmailHeader(message, "List-Unsubscribe")) || /unsubscribe|opt[\s-]?out|cancelar\s+(?:la\s+)?suscripci[oó]n|darse\s+de\s+baja|desuscrib|dejar\s+de\s+recibir|manage\s+(?:email\s+)?preferences|preferencias\s+(?:de\s+)?(?:correo|comunicaci[oó]n|suscripci[oó]n)/i.test(message.snippet ?? ""),
     indexedAt: Date.now(),
   };

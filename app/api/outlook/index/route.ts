@@ -51,7 +51,8 @@ export async function GET(request: Request) {
     groups: groups.map((group, index) => {
       const detectedCategory = group.classificationReason === "promotional_terms" || group.classificationReason === "gmail_promotions" ? "Publicidad" : group.classificationReason === "editorial_terms" || group.classificationReason === "unsubscribe_header" || group.classificationReason === "unsubscribe_content" ? "Newsletters" : "Notificaciones";
       const category = group.isSafe ? "Notificaciones" : group.manualCategory ?? detectedCategory;
-      const latestAt = Number(group.latestAt ?? 0);
+      const rawLatestAt = Number(group.latestAt ?? 0);
+      const latestAt = Number.isFinite(rawLatestAt) && rawLatestAt > 0 ? rawLatestAt : 0;
       return {
         id: group.id,
         name: group.name,

@@ -111,6 +111,18 @@ The app requests delegated `User.Read`, `Mail.ReadWrite` and `offline_access`
 permissions. The local development redirect uses the same path on the local
 origin.
 
+## Local Cloudflare Tunnel
+
+The local app can be reached at `https://spamkill.luiszamora.dev` through the
+Cloudflare tunnel. Run the app locally with `npm run dev`, and keep the
+`cloudflared tunnel run colesterol-game` connector running. Its ingress maps
+this hostname to `http://localhost:3000`.
+
+Register these public OAuth callbacks when using the tunnel:
+
+- Google: `https://spamkill.luiszamora.dev/api/google/callback`
+- Microsoft Entra: `https://spamkill.luiszamora.dev/api/outlook/callback`
+
 ## Learn More
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
