@@ -8,8 +8,7 @@ import {
   type GmailMimePart,
   type ScanRange,
 } from "@/lib/google";
-import { getDb } from "@/db";
-import { unsubscribeHistory } from "@/db/schema";
+import { execute } from "@/db/mysql";
 import { setIndexedMessagesTrashed } from "@/lib/gmail-index-store";
 
 type ActionPayload = {
@@ -226,22 +225,23 @@ export async function POST(request: Request) {
         messagesTrashed: groupTrashed,
         manualUrl: groupManualUrl,
       };
-      await getDb()
-        .insert(unsubscribeHistory)
-        .values(record)
-        .onConflictDoUpdate({
-          target: [unsubscribeHistory.accountEmail, unsubscribeHistory.senderEmail],
-          set: {
-            senderName: record.senderName,
-            senderDomain: record.senderDomain,
-            status: groupManual ? "manual" : record.status,
-            requestedAt: now,
-            updatedAt: now,
-            lastSeenAt: null,
-            messagesTrashed: record.messagesTrashed,
-            manualUrl: record.manualUrl,
-          },
-        });
+      await execute(
+        `INSERT INTO unsubscribe_history
+         (id, account_email, provider, sender_email, sender_name, sender_domain,
+          status, requested_at, updated_at, last_seen_at, messages_trashed, manual_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          sender_name = VALUES(sender_name), sender_domain = VALUES(sender_domain),
+          status = VALUES(status), requested_at = VALUES(requested_at),
+          updated_at = VALUES(updated_at), last_seen_at = VALUES(last_seen_at),
+          messages_trashed = VALUES(messages_trashed), manual_url = VALUES(manual_url)`,
+        [
+          record.id, record.accountEmail, record.provider, record.senderEmail,
+          record.senderName, record.senderDomain,
+          groupManual ? "manual" : record.status, now, now, null,
+          record.messagesTrashed, record.manualUrl,
+        ],
+      );
     }
   }
 

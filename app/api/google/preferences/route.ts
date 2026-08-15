@@ -1,4 +1,4 @@
-import { getD1 } from "@/db";
+import { execute } from "@/db/mysql";
 import { authorizedGoogleSession, jsonWithSession } from "@/lib/google";
 import type { MessageCategory } from "@/lib/gmail-index";
 
@@ -28,31 +28,30 @@ export async function POST(request: Request) {
     return jsonWithSession({ error: "La categoría no es válida." }, 400, setCookie);
   }
   const safe = Boolean(payload.safe);
-  const db = getD1();
   if (!category && !safe) {
-    await db
-      .prepare(`DELETE FROM sender_preferences
-        WHERE account_email = ? AND sender_email = ?`)
-      .bind(session.email, senderEmail)
-      .run();
+    await execute(
+      `DELETE FROM sender_preferences
+       WHERE account_email = ? AND sender_email = ?`,
+      [session.email, senderEmail],
+    );
   } else {
-    await db
-      .prepare(`INSERT INTO sender_preferences
-        (id, account_email, sender_email, manual_category, is_safe, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(account_email, sender_email) DO UPDATE SET
-          manual_category = excluded.manual_category,
-          is_safe = excluded.is_safe,
-          updated_at = excluded.updated_at`)
-      .bind(
+    await execute(
+      `INSERT INTO sender_preferences
+       (id, account_email, sender_email, manual_category, is_safe, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         manual_category = VALUES(manual_category),
+         is_safe = VALUES(is_safe),
+         updated_at = VALUES(updated_at)`,
+      [
         `${session.email}:${senderEmail}`,
         session.email,
         senderEmail,
         category,
         safe ? 1 : 0,
         Date.now(),
-      )
-      .run();
+      ],
+    );
   }
 
   return jsonWithSession(

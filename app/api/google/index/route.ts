@@ -1,6 +1,5 @@
-import { and, count, eq, gte, isNull, lt, max, sql } from "drizzle-orm";
-import { getDb } from "@/db";
-import { gmailSyncState, indexedMessages, senderPreferences } from "@/db/schema";
+import { query } from "@/db/mysql";
+import type { RowDataPacket } from "mysql2/promise";
 import {
   authorizedGoogleSession,
   buildMailboxQuery,
@@ -14,6 +13,36 @@ import {
   type ClassificationReason,
   type MessageCategory,
 } from "@/lib/gmail-index";
+
+type IndexRow = RowDataPacket & {
+  id: string;
+  name: string;
+  domain: string;
+  count: number | string;
+  advertisingCount: number | string;
+  newsletterCount: number | string;
+  notificationCount: number | string;
+  transactionalCount: number | string;
+  gmailPromotionsCount: number | string;
+  promotionalTermsCount: number | string;
+  gmailCategoriesCount: number | string;
+  editorialCount: number | string;
+  unsubscribeHeaderCount: number | string;
+  unsubscribeContentCount: number | string;
+  noSignalsCount: number | string;
+  legacyCount: number | string;
+  latestAt: number | string | null;
+  unsub: number | string;
+  primaryMessageId: string;
+  manualCategory: MessageCategory | null;
+  isSafe: number | string;
+};
+
+type SyncStateRow = RowDataPacket & {
+  coverageStartAt: number | string | null;
+  lastIncrementalSyncAt: number | string | null;
+  lastFullScanAt: number | string | null;
+};
 
 const palette = ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"];
 
@@ -45,129 +74,119 @@ export async function GET(request: Request) {
     );
   }
 
-  const startAt = rangeStartTimestamp(range, after);
-  const conditions = [
-    eq(indexedMessages.accountEmail, session.email),
-    isNull(indexedMessages.trashedAt),
-    gte(indexedMessages.receivedAt, startAt),
-  ];
+  const params: unknown[] = [session.email, rangeStartTimestamp(range, after)];
+  let dateClause = "";
   if (range === "custom" && before) {
     const exclusiveEnd = new Date(`${before}T00:00:00Z`);
     exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
-    conditions.push(lt(indexedMessages.receivedAt, exclusiveEnd.getTime()));
+    dateClause = " AND im.received_at < ?";
+    params.push(exclusiveEnd.getTime());
   }
 
-  const db = getDb();
-  const rows = await db
-    .select({
-      id: indexedMessages.senderEmail,
-      name: sql<string>`MAX(${indexedMessages.senderName})`,
-      domain: sql<string>`MAX(${indexedMessages.senderDomain})`,
-      count: count(indexedMessages.id),
-      advertisingCount: sql<number>`SUM(CASE WHEN ${indexedMessages.category} = 'Publicidad' THEN 1 ELSE 0 END)`,
-      newsletterCount: sql<number>`SUM(CASE WHEN ${indexedMessages.category} = 'Newsletters' THEN 1 ELSE 0 END)`,
-      notificationCount: sql<number>`SUM(CASE WHEN ${indexedMessages.category} = 'Notificaciones' THEN 1 ELSE 0 END)`,
-      transactionalCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'transactional_terms' THEN 1 ELSE 0 END)`,
-      gmailPromotionsCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'gmail_promotions' THEN 1 ELSE 0 END)`,
-      promotionalTermsCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'promotional_terms' THEN 1 ELSE 0 END)`,
-      gmailCategoriesCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'gmail_categories' THEN 1 ELSE 0 END)`,
-      editorialCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'editorial_terms' THEN 1 ELSE 0 END)`,
-      unsubscribeHeaderCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'unsubscribe_header' THEN 1 ELSE 0 END)`,
-      unsubscribeContentCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'unsubscribe_content' THEN 1 ELSE 0 END)`,
-      noSignalsCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'no_signals' THEN 1 ELSE 0 END)`,
-      legacyCount: sql<number>`SUM(CASE WHEN ${indexedMessages.classificationReason} = 'legacy_classification' THEN 1 ELSE 0 END)`,
-      latestAt: max(indexedMessages.receivedAt),
-      unsub: sql<number>`MAX(CASE WHEN ${indexedMessages.hasUnsubscribe} = 1 THEN 1 ELSE 0 END)`,
-      primaryMessageId: sql<string>`COALESCE(
-        MAX(CASE WHEN ${indexedMessages.hasUnsubscribe} = 1 THEN ${indexedMessages.messageId} END),
-        MAX(${indexedMessages.messageId})
-      )`,
-      manualCategory: sql<MessageCategory | null>`MAX(${senderPreferences.manualCategory})`,
-      isSafe: sql<number>`MAX(CASE WHEN ${senderPreferences.isSafe} = 1 THEN 1 ELSE 0 END)`,
-    })
-    .from(indexedMessages)
-    .leftJoin(
-      senderPreferences,
-      and(
-        eq(senderPreferences.accountEmail, indexedMessages.accountEmail),
-        eq(senderPreferences.senderEmail, indexedMessages.senderEmail),
-      ),
-    )
-    .where(and(...conditions))
-    .groupBy(indexedMessages.senderEmail)
-    .orderBy(sql`COUNT(${indexedMessages.id}) DESC`);
-  const [state] = await db
-    .select()
-    .from(gmailSyncState)
-    .where(eq(gmailSyncState.accountEmail, session.email))
-    .limit(1);
-  const coverageComplete = state?.coverageStartAt != null &&
-    state.coverageStartAt <= startAt;
+  const rows = await query<IndexRow[]>(
+    `SELECT im.sender_email AS id,
+            MAX(im.sender_name) AS name,
+            MAX(im.sender_domain) AS domain,
+            COUNT(im.id) AS count,
+            SUM(CASE WHEN im.category = 'Publicidad' THEN 1 ELSE 0 END) AS advertisingCount,
+            SUM(CASE WHEN im.category = 'Newsletters' THEN 1 ELSE 0 END) AS newsletterCount,
+            SUM(CASE WHEN im.category = 'Notificaciones' THEN 1 ELSE 0 END) AS notificationCount,
+            SUM(CASE WHEN im.classification_reason = 'transactional_terms' THEN 1 ELSE 0 END) AS transactionalCount,
+            SUM(CASE WHEN im.classification_reason = 'gmail_promotions' THEN 1 ELSE 0 END) AS gmailPromotionsCount,
+            SUM(CASE WHEN im.classification_reason = 'promotional_terms' THEN 1 ELSE 0 END) AS promotionalTermsCount,
+            SUM(CASE WHEN im.classification_reason = 'gmail_categories' THEN 1 ELSE 0 END) AS gmailCategoriesCount,
+            SUM(CASE WHEN im.classification_reason = 'editorial_terms' THEN 1 ELSE 0 END) AS editorialCount,
+            SUM(CASE WHEN im.classification_reason = 'unsubscribe_header' THEN 1 ELSE 0 END) AS unsubscribeHeaderCount,
+            SUM(CASE WHEN im.classification_reason = 'unsubscribe_content' THEN 1 ELSE 0 END) AS unsubscribeContentCount,
+            SUM(CASE WHEN im.classification_reason = 'no_signals' THEN 1 ELSE 0 END) AS noSignalsCount,
+            SUM(CASE WHEN im.classification_reason = 'legacy_classification' THEN 1 ELSE 0 END) AS legacyCount,
+            MAX(im.received_at) AS latestAt,
+            MAX(CASE WHEN im.has_unsubscribe = 1 THEN 1 ELSE 0 END) AS unsub,
+            COALESCE(MAX(CASE WHEN im.has_unsubscribe = 1 THEN im.message_id END), MAX(im.message_id)) AS primaryMessageId,
+            MAX(sp.manual_category) AS manualCategory,
+            MAX(CASE WHEN sp.is_safe = 1 THEN 1 ELSE 0 END) AS isSafe
+       FROM indexed_messages im
+       LEFT JOIN sender_preferences sp
+         ON sp.account_email = im.account_email AND sp.sender_email = im.sender_email
+      WHERE im.account_email = ? AND im.trashed_at IS NULL AND im.received_at >= ?${dateClause}
+      GROUP BY im.sender_email
+      ORDER BY COUNT(im.id) DESC`,
+    params,
+  );
+  const [state] = await query<SyncStateRow[]>(
+    `SELECT coverage_start_at AS coverageStartAt,
+            last_incremental_sync_at AS lastIncrementalSyncAt,
+            last_full_scan_at AS lastFullScanAt
+       FROM gmail_sync_state WHERE account_email = ? LIMIT 1`,
+    [session.email],
+  );
+  const startAt = rangeStartTimestamp(range, after);
+  const coverageStartAt = state?.coverageStartAt == null ? null : Number(state.coverageStartAt);
+  const coverageComplete = coverageStartAt != null && coverageStartAt <= startAt;
+
   const groups = rows.map((row, index) => {
-    const latestAt = row.latestAt ?? 0;
+    const count = Number(row.count);
     const categoryCounts: Array<[MessageCategory, number]> = [
-      ["Publicidad", row.advertisingCount],
-      ["Newsletters", row.newsletterCount],
-      ["Notificaciones", row.notificationCount],
+      ["Publicidad", Number(row.advertisingCount)],
+      ["Newsletters", Number(row.newsletterCount)],
+      ["Notificaciones", Number(row.notificationCount)],
     ];
     categoryCounts.sort((a, b) => b[1] - a[1]);
     const detectedCategory = categoryCounts[0][0];
     const reasonCounts: Record<ClassificationReason, number> = {
-      transactional_terms: row.transactionalCount,
-      gmail_promotions: row.gmailPromotionsCount,
-      promotional_terms: row.promotionalTermsCount,
-      gmail_categories: row.gmailCategoriesCount,
-      editorial_terms: row.editorialCount,
-      unsubscribe_header: row.unsubscribeHeaderCount,
-      unsubscribe_content: row.unsubscribeContentCount,
-      no_signals: row.noSignalsCount,
-      legacy_classification: row.legacyCount,
+      transactional_terms: Number(row.transactionalCount),
+      gmail_promotions: Number(row.gmailPromotionsCount),
+      promotional_terms: Number(row.promotionalTermsCount),
+      gmail_categories: Number(row.gmailCategoriesCount),
+      editorial_terms: Number(row.editorialCount),
+      unsubscribe_header: Number(row.unsubscribeHeaderCount),
+      unsubscribe_content: Number(row.unsubscribeContentCount),
+      no_signals: Number(row.noSignalsCount),
+      legacy_classification: Number(row.legacyCount),
     };
     const candidates: Record<MessageCategory, ClassificationReason[]> = {
       Publicidad: ["gmail_promotions", "promotional_terms"],
       Newsletters: ["editorial_terms", "unsubscribe_header", "unsubscribe_content"],
       Notificaciones: ["transactional_terms", "gmail_categories", "no_signals"],
     };
-    const detectedReason = row.legacyCount >= Math.ceil(row.count / 2)
+    const legacyCount = Number(row.legacyCount);
+    const detectedReason = legacyCount >= Math.ceil(count / 2)
       ? "legacy_classification"
-      : candidates[detectedCategory]
-        .sort((a, b) => reasonCounts[b] - reasonCounts[a])[0];
-    const dominantRatio = row.count ? categoryCounts[0][1] / row.count : 0;
-    const autoDoubtful = dominantRatio < 0.6 || row.noSignalsCount >= Math.ceil(row.count / 2);
+      : candidates[detectedCategory].sort((a, b) => reasonCounts[b] - reasonCounts[a])[0];
+    const dominantRatio = count ? categoryCounts[0][1] / count : 0;
+    const autoDoubtful = dominantRatio < 0.6 || Number(row.noSignalsCount) >= Math.ceil(count / 2);
     const detectedConfidence: ClassificationConfidence = autoDoubtful
       ? "low"
       : detectedReason === "unsubscribe_header" || detectedReason === "unsubscribe_content" || detectedReason === "legacy_classification"
         ? "medium"
         : "high";
-    const safe = Boolean(row.isSafe);
+    const safe = Boolean(Number(row.isSafe));
     const corrected = Boolean(row.manualCategory);
-    const category = safe
-      ? "Notificaciones"
-      : row.manualCategory ?? detectedCategory;
-    const classificationReason = safe
-      ? "Lo marcaste como remitente seguro; nunca se tratará como publicidad."
-      : corrected
-        ? `Corregiste este remitente como ${row.manualCategory}; recordaremos tu elección.`
-        : classificationReasonText(detectedReason);
+    const category = safe ? "Notificaciones" : row.manualCategory ?? detectedCategory;
+    const name = String(row.name || row.id);
     return {
       id: row.id,
-      name: row.name,
+      name,
       domain: row.domain,
-      count: row.count,
+      count,
       category,
       detectedCategory,
       detectedReason: classificationReasonText(detectedReason),
-      classificationReason,
+      classificationReason: safe
+        ? "Lo marcaste como remitente seguro; nunca se tratará como publicidad."
+        : corrected
+          ? `Corregiste este remitente como ${row.manualCategory}; recordaremos tu elección.`
+          : classificationReasonText(detectedReason),
       confidence: safe || corrected ? "high" : detectedConfidence,
       doubtful: !safe && !corrected && autoDoubtful,
       corrected,
       safe,
       color: palette[index % palette.length],
-      initials: row.name.slice(0, 2).toUpperCase(),
-      last: formatDate(latestAt),
-      unsub: Boolean(row.unsub),
+      initials: name.slice(0, 2).toUpperCase(),
+      last: formatDate(Number(row.latestAt ?? 0)),
+      unsub: Boolean(Number(row.unsub)),
       primaryMessageId: row.primaryMessageId,
-      latestAt,
+      latestAt: Number(row.latestAt ?? 0),
     };
   });
 
@@ -179,7 +198,7 @@ export async function GET(request: Request) {
       resultSizeEstimate: groups.reduce((total, group) => total + group.count, 0),
       coverageComplete,
       syncedAt: state
-        ? Math.max(state.lastIncrementalSyncAt ?? 0, state.lastFullScanAt ?? 0) || null
+        ? Math.max(Number(state.lastIncrementalSyncAt ?? 0), Number(state.lastFullScanAt ?? 0)) || null
         : null,
     },
     200,

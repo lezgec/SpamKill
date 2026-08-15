@@ -1,42 +1,42 @@
 # SpamKill local
 
 Aplicación web local para revisar publicidad, newsletters y notificaciones de
-Gmail y Outlook por separado. Permite analizar remitentes, abrir sus mensajes,
-desuscribirse y mover correos seleccionados a la papelera.
+Gmail y Outlook por separado. La persistencia usa MySQL/MariaDB de XAMPP y
+consultas SQL directas; no usa D1, Drizzle ni una base de datos en la nube.
 
 ## Requisitos
 
-- Node.js 22.13 o posterior
-- Una aplicación OAuth de Google para Gmail
-- Una aplicación OAuth de Microsoft Entra para Outlook
-- Cloudflare Tunnel solo si quieres acceder desde un dominio público
+- Node.js 22.13 o posterior.
+- XAMPP con MySQL/MariaDB iniciado en el puerto 3306.
+- Credenciales OAuth de Google y Microsoft Entra.
+- Cloudflare Tunnel solo si quieres acceder desde `spamkill.luiszamora.dev`.
 
-## Instalación
+## Configuración
+
+Instala las dependencias:
 
 ```powershell
 npm install
 ```
 
-Crea `.env.local` con:
+Completa `.env.local` con tus credenciales OAuth y estos valores de MySQL:
 
 ```env
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-OUTLOOK_CLIENT_ID=...
-OUTLOOK_CLIENT_SECRET=...
-APP_ENCRYPTION_KEY=...
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=spamkill
 ```
 
-## Base local
-
-Después del primer build, aplica las migraciones D1 locales:
+Inicializa la base nueva y sus tablas:
 
 ```powershell
-npm run build
-npm run db:migrate:local
+npm run db:init
 ```
 
-La base se guarda en `.wrangler/state` y no se sube al repositorio.
+El script ejecuta [db/schema.sql](/C:/Users/lezgo/Documents/SpamKill/db/schema.sql)
+y deja la base vacía para empezar desde cero.
 
 ## Ejecutar desde VS Code
 
@@ -44,20 +44,24 @@ La base se guarda en `.wrangler/state` y no se sube al repositorio.
 npm run dev
 ```
 
-Abre [http://localhost:3000](http://localhost:3000).
+Abre [http://localhost:3000](http://localhost:3000). Para una compilación de
+producción local:
 
-Para usar el dominio mediante Cloudflare Tunnel, en otra terminal ejecuta:
+```powershell
+npm run build
+npm run start
+```
+
+## Cloudflare Tunnel opcional
+
+La configuración existente puede dirigir `spamkill.luiszamora.dev` a
+`localhost:3000`:
 
 ```powershell
 cloudflared tunnel --config "$env:USERPROFILE\.cloudflared\config.yml" run colesterol-game
 ```
 
-La configuración existente dirige `juego.luiszamora.dev` al Apache de XAMPP y
-`spamkill.luiszamora.dev` a `localhost:3000`.
-
-## OAuth con el túnel
-
-Registra estos callbacks en cada proveedor:
+Registra estos callbacks OAuth:
 
 - Google: `https://spamkill.luiszamora.dev/api/google/callback`
 - Microsoft Entra: `https://spamkill.luiszamora.dev/api/outlook/callback`
@@ -66,6 +70,5 @@ Registra estos callbacks en cada proveedor:
 
 ```powershell
 npm run lint
-npm run build
-npm run start
+npm run db:init
 ```

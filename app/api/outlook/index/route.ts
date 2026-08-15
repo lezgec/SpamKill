@@ -1,9 +1,22 @@
-import { and, count, eq, gte, isNull, lt, max, sql } from "drizzle-orm";
-import { getDb } from "@/db";
-import { indexedMessages, senderPreferences } from "@/db/schema";
+import { query } from "@/db/mysql";
+import type { RowDataPacket } from "mysql2/promise";
 import { authorizedOutlookSession, outlookAccountKey } from "@/lib/outlook";
 import { jsonWithSession, rangeStartTimestamp, type ScanRange } from "@/lib/google";
-import { classificationReasonText, type MessageCategory } from "@/lib/gmail-index";
+import { classificationReasonText } from "@/lib/gmail-index";
+
+type IndexRow = RowDataPacket & {
+  id: string;
+  name: string;
+  domain: string;
+  count: number | string;
+  latestAt: number | string | null;
+  unsub: number | string;
+  manualCategory: "Publicidad" | "Newsletters" | "Notificaciones" | null;
+  isSafe: number | string;
+  classificationReason: string;
+  classificationConfidence: "high" | "medium" | "low";
+  primaryMessageId: string;
+};
 
 export async function GET(request: Request) {
   const { session, setCookie } = await authorizedOutlookSession(request);
@@ -13,63 +26,65 @@ export async function GET(request: Request) {
   const range = (["all", "30d", "90d", "1y", "custom"].includes(rangeValue) ? rangeValue : "90d") as ScanRange;
   const after = requestUrl.searchParams.get("after");
   const before = requestUrl.searchParams.get("before");
-  const conditions = [
-    eq(indexedMessages.accountEmail, outlookAccountKey(session.email)),
-    isNull(indexedMessages.trashedAt),
-    gte(indexedMessages.receivedAt, rangeStartTimestamp(range, after)),
-  ];
+  const params: unknown[] = [outlookAccountKey(session.email), rangeStartTimestamp(range, after)];
+  let dateClause = "";
   if (range === "custom" && before) {
     const exclusiveEnd = new Date(`${before}T00:00:00Z`);
     exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
-    conditions.push(lt(indexedMessages.receivedAt, exclusiveEnd.getTime()));
+    dateClause = " AND im.received_at < ?";
+    params.push(exclusiveEnd.getTime());
   }
-  const db = getDb();
-  const where = and(...conditions);
-  const groups = await db.select({
-    id: indexedMessages.senderEmail,
-    name: sql<string>`MAX(${indexedMessages.senderName})`,
-    domain: sql<string>`MAX(${indexedMessages.senderDomain})`,
-    count: count(indexedMessages.id),
-    latestAt: max(indexedMessages.receivedAt),
-    unsub: sql<number>`MAX(CASE WHEN ${indexedMessages.hasUnsubscribe} = 1 THEN 1 ELSE 0 END)`,
-    manualCategory: sql<MessageCategory | null>`MAX(${senderPreferences.manualCategory})`,
-    isSafe: sql<number>`MAX(CASE WHEN ${senderPreferences.isSafe} = 1 THEN 1 ELSE 0 END)`,
-    classificationReason: sql<string>`MAX(${indexedMessages.classificationReason})`,
-    classificationConfidence: sql<"high" | "medium" | "low">`MAX(${indexedMessages.classificationConfidence})`,
-    primaryMessageId: sql<string>`MAX(${indexedMessages.messageId})`,
-  }).from(indexedMessages)
-    .leftJoin(senderPreferences, and(
-      eq(senderPreferences.accountEmail, indexedMessages.accountEmail),
-      eq(senderPreferences.senderEmail, indexedMessages.senderEmail),
-    ))
-    .where(where)
-    .groupBy(indexedMessages.senderEmail)
-    .orderBy(sql`COUNT(${indexedMessages.id}) DESC`);
+  const groups = await query<IndexRow[]>(
+    `SELECT im.sender_email AS id,
+            MAX(im.sender_name) AS name,
+            MAX(im.sender_domain) AS domain,
+            COUNT(im.id) AS count,
+            MAX(im.received_at) AS latestAt,
+            MAX(CASE WHEN im.has_unsubscribe = 1 THEN 1 ELSE 0 END) AS unsub,
+            MAX(sp.manual_category) AS manualCategory,
+            MAX(CASE WHEN sp.is_safe = 1 THEN 1 ELSE 0 END) AS isSafe,
+            MAX(im.classification_reason) AS classificationReason,
+            MAX(im.classification_confidence) AS classificationConfidence,
+            MAX(im.message_id) AS primaryMessageId
+       FROM indexed_messages im
+       LEFT JOIN sender_preferences sp
+         ON sp.account_email = im.account_email AND sp.sender_email = im.sender_email
+      WHERE im.account_email = ? AND im.trashed_at IS NULL AND im.received_at >= ?${dateClause}
+      GROUP BY im.sender_email
+      ORDER BY COUNT(im.id) DESC`,
+    params,
+  );
   const total = groups.reduce((sum, group) => sum + Number(group.count), 0);
   return jsonWithSession({
     email: session.email,
     groups: groups.map((group, index) => {
-      const detectedCategory = group.classificationReason === "promotional_terms" || group.classificationReason === "gmail_promotions" ? "Publicidad" : group.classificationReason === "editorial_terms" || group.classificationReason === "unsubscribe_header" || group.classificationReason === "unsubscribe_content" ? "Newsletters" : "Notificaciones";
-      const category = group.isSafe ? "Notificaciones" : group.manualCategory ?? detectedCategory;
+      const detectedCategory = group.classificationReason === "promotional_terms" || group.classificationReason === "gmail_promotions"
+        ? "Publicidad"
+        : group.classificationReason === "editorial_terms" || group.classificationReason === "unsubscribe_header" || group.classificationReason === "unsubscribe_content"
+          ? "Newsletters"
+          : "Notificaciones";
+      const safe = Boolean(Number(group.isSafe));
+      const category = safe ? "Notificaciones" : group.manualCategory ?? detectedCategory;
       const rawLatestAt = Number(group.latestAt ?? 0);
       const latestAt = Number.isFinite(rawLatestAt) && rawLatestAt > 0 ? rawLatestAt : 0;
+      const name = String(group.name || group.id);
       return {
         id: group.id,
-        name: group.name,
+        name,
         domain: group.domain,
         count: Number(group.count),
         category,
         detectedCategory,
         detectedReason: classificationReasonText(group.classificationReason as Parameters<typeof classificationReasonText>[0]),
-        classificationReason: group.isSafe ? "Lo marcaste como remitente seguro." : group.manualCategory ? `Corregiste este remitente como ${group.manualCategory}.` : classificationReasonText(group.classificationReason as Parameters<typeof classificationReasonText>[0]),
-        confidence: group.isSafe || group.manualCategory ? "high" : group.classificationConfidence ?? "low",
-        doubtful: !group.isSafe && !group.manualCategory && (group.classificationConfidence ?? "low") === "low",
+        classificationReason: safe ? "Lo marcaste como remitente seguro." : group.manualCategory ? `Corregiste este remitente como ${group.manualCategory}.` : classificationReasonText(group.classificationReason as Parameters<typeof classificationReasonText>[0]),
+        confidence: safe || group.manualCategory ? "high" : group.classificationConfidence ?? "low",
+        doubtful: !safe && !group.manualCategory && (group.classificationConfidence ?? "low") === "low",
         corrected: Boolean(group.manualCategory),
-        safe: Boolean(group.isSafe),
+        safe,
         color: ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"][index % 6],
-        initials: group.name.slice(0, 2).toUpperCase(),
+        initials: name.slice(0, 2).toUpperCase(),
         last: latestAt ? new Intl.DateTimeFormat("es", { day: "numeric", month: "short" }).format(new Date(latestAt)) : "—",
-        unsub: Boolean(group.unsub),
+        unsub: Boolean(Number(group.unsub)),
         primaryMessageId: group.primaryMessageId,
         latestAt,
       };

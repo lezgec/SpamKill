@@ -1,5 +1,4 @@
-import { getDb } from "@/db";
-import { senderPreferences } from "@/db/schema";
+import { execute } from "@/db/mysql";
 import { authorizedOutlookSession, outlookAccountKey } from "@/lib/outlook";
 import { jsonWithSession } from "@/lib/google";
 
@@ -19,16 +18,22 @@ export async function POST(request: Request) {
   }
   const accountEmail = outlookAccountKey(session.email);
   const now = Date.now();
-  await getDb().insert(senderPreferences).values({
-    id: `${accountEmail}:${senderEmail}`,
-    accountEmail,
-    senderEmail,
-    manualCategory: payload.category ?? null,
-    isSafe: Boolean(payload.safe),
-    updatedAt: now,
-  }).onConflictDoUpdate({
-    target: [senderPreferences.accountEmail, senderPreferences.senderEmail],
-    set: { manualCategory: payload.category ?? null, isSafe: Boolean(payload.safe), updatedAt: now },
-  });
+  await execute(
+    `INSERT INTO sender_preferences
+     (id, account_email, sender_email, manual_category, is_safe, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       manual_category = VALUES(manual_category),
+       is_safe = VALUES(is_safe),
+       updated_at = VALUES(updated_at)`,
+    [
+      `${accountEmail}:${senderEmail}`,
+      accountEmail,
+      senderEmail,
+      payload.category ?? null,
+      payload.safe ? 1 : 0,
+      now,
+    ],
+  );
   return jsonWithSession({ saved: true }, 200, setCookie);
 }

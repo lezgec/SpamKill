@@ -1,6 +1,5 @@
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { gmailSyncState } from "@/db/schema";
+import { execute, query } from "@/db/mysql";
+import type { RowDataPacket } from "mysql2/promise";
 import type { GmailMessage } from "@/lib/gmail-index";
 import {
   deleteIndexedMessageIds,
@@ -26,6 +25,7 @@ type HistoryPage = {
   historyId?: string;
   nextPageToken?: string;
 };
+type SyncStateRow = RowDataPacket & { historyId: string | null };
 
 const excludedLabels = new Set(["SENT", "DRAFT", "SPAM", "TRASH"]);
 
@@ -57,12 +57,10 @@ export async function POST(request: Request) {
   const { session, setCookie } = await authorizedGoogleSession(request);
   if (!session) return jsonWithSession({ error: "Gmail no está conectado." }, 401);
 
-  const db = getDb();
-  const [state] = await db
-    .select()
-    .from(gmailSyncState)
-    .where(eq(gmailSyncState.accountEmail, session.email))
-    .limit(1);
+  const [state] = await query<SyncStateRow[]>(
+    `SELECT history_id AS historyId FROM gmail_sync_state WHERE account_email = ? LIMIT 1`,
+    [session.email],
+  );
   if (!state?.historyId) {
     return jsonWithSession({ needsFullSync: true, added: 0, removed: 0 }, 200, setCookie);
   }
@@ -150,14 +148,12 @@ export async function POST(request: Request) {
   await deleteIndexedMessageIds(session.email, removedIds);
   const added = await replaceIndexedMessages(session.email, activeMessages);
   const syncedAt = Date.now();
-  await db
-    .update(gmailSyncState)
-    .set({
-      historyId: latestHistoryId,
-      lastIncrementalSyncAt: syncedAt,
-      updatedAt: syncedAt,
-    })
-    .where(eq(gmailSyncState.accountEmail, session.email));
+  await execute(
+    `UPDATE gmail_sync_state
+        SET history_id = ?, last_incremental_sync_at = ?, updated_at = ?
+      WHERE account_email = ?`,
+    [latestHistoryId, syncedAt, syncedAt, session.email],
+  );
   await verifyUnsubscribeHistory(session.email);
 
   return jsonWithSession(

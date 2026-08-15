@@ -1,25 +1,24 @@
-import { getD1, getDb } from "@/db";
-import { indexedMessages } from "@/db/schema";
+import { execute } from "@/db/mysql";
 import { indexedMessageValues, type GmailMessage } from "@/lib/gmail-index";
 
-// Keep each D1 batch small and use one prepared statement per message. Outlook
-// Graph IDs are long; a single IN (...) statement can become brittle even when
-// its parameter count is below D1's documented limit.
-const DELETE_BATCH_SIZE = 20;
-const INSERT_CHUNK_SIZE = 7;
+const BATCH_SIZE = 20;
+
+function placeholders(size: number): string {
+  return Array.from({ length: size }, () => "?").join(", ");
+}
 
 export async function deleteIndexedMessageIds(
   accountEmail: string,
   messageIds: string[],
 ): Promise<void> {
   const uniqueIds = [...new Set(messageIds)].filter(Boolean);
-  const db = getD1();
-  for (let index = 0; index < uniqueIds.length; index += DELETE_BATCH_SIZE) {
-    const chunk = uniqueIds.slice(index, index + DELETE_BATCH_SIZE);
-    await db.batch(chunk.map((messageId) => db
-      .prepare(`DELETE FROM indexed_messages
-        WHERE account_email = ? AND message_id = ?`)
-      .bind(accountEmail, messageId)));
+  for (let index = 0; index < uniqueIds.length; index += BATCH_SIZE) {
+    const ids = uniqueIds.slice(index, index + BATCH_SIZE);
+    await execute(
+      `DELETE FROM indexed_messages
+       WHERE account_email = ? AND message_id IN (${placeholders(ids.length)})`,
+      [accountEmail, ...ids],
+    );
   }
 }
 
@@ -29,14 +28,13 @@ export async function setIndexedMessagesTrashed(
   trashed: boolean,
 ): Promise<void> {
   const uniqueIds = [...new Set(messageIds)].filter(Boolean);
-  const db = getD1();
-  for (let index = 0; index < uniqueIds.length; index += DELETE_BATCH_SIZE) {
-    const chunk = uniqueIds.slice(index, index + DELETE_BATCH_SIZE);
-    await db.batch(chunk.map((messageId) => db
-      .prepare(`UPDATE indexed_messages
-        SET trashed_at = ?
-        WHERE account_email = ? AND message_id = ?`)
-      .bind(trashed ? Date.now() : null, accountEmail, messageId)));
+  for (let index = 0; index < uniqueIds.length; index += BATCH_SIZE) {
+    const ids = uniqueIds.slice(index, index + BATCH_SIZE);
+    await execute(
+      `UPDATE indexed_messages SET trashed_at = ?
+       WHERE account_email = ? AND message_id IN (${placeholders(ids.length)})`,
+      [trashed ? Date.now() : null, accountEmail, ...ids],
+    );
   }
 }
 
@@ -48,11 +46,35 @@ export async function replaceIndexedMessages(
   const values = messages
     .map((message) => indexedMessageValues(accountEmail, message))
     .filter((value): value is NonNullable<typeof value> => Boolean(value));
-  const db = getDb();
-  for (let index = 0; index < values.length; index += INSERT_CHUNK_SIZE) {
-    await db
-      .insert(indexedMessages)
-      .values(values.slice(index, index + INSERT_CHUNK_SIZE));
+
+  for (let index = 0; index < values.length; index += 7) {
+    const chunk = values.slice(index, index + 7);
+    const rowPlaceholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const params = chunk.flatMap((value) => [
+      value.id,
+      value.accountEmail,
+      value.messageId,
+      value.senderEmail,
+      value.senderName,
+      value.senderDomain,
+      value.subject,
+      value.snippet,
+      value.category,
+      value.classificationReason,
+      value.classificationConfidence,
+      value.receivedAt,
+      value.hasUnsubscribe ? 1 : 0,
+      value.indexedAt,
+      null,
+    ]);
+    await execute(
+      `INSERT INTO indexed_messages
+       (id, account_email, message_id, sender_email, sender_name, sender_domain,
+        subject, snippet, category, classification_reason, classification_confidence,
+        received_at, has_unsubscribe, indexed_at, trashed_at)
+       VALUES ${rowPlaceholders}`,
+      params,
+    );
   }
   return values.length;
 }

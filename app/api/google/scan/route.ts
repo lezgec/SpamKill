@@ -1,6 +1,5 @@
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { gmailSyncState } from "@/db/schema";
+import { execute, query as mysqlQuery } from "@/db/mysql";
+import type { RowDataPacket } from "mysql2/promise";
 import {
   classificationFor,
   classificationReasonText,
@@ -39,6 +38,11 @@ type SenderGroup = {
   unsub: boolean;
   primaryMessageId: string;
   latestAt: number;
+};
+type SyncStateRow = RowDataPacket & {
+  historyId: string | null;
+  coverageStartAt: number | string | null;
+  lastIncrementalSyncAt: number | string | null;
 };
 
 const palette = ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"];
@@ -200,20 +204,23 @@ export async function GET(request: Request) {
   }
 
   if (!list.nextPageToken) {
-    const db = getDb();
     const now = Date.now();
-    const [existingState] = await db
-      .select()
-      .from(gmailSyncState)
-      .where(eq(gmailSyncState.accountEmail, session.email))
-      .limit(1);
+    const [existingState] = await mysqlQuery<SyncStateRow[]>(
+      `SELECT account_email AS accountEmail, history_id AS historyId,
+              coverage_start_at AS coverageStartAt,
+              last_full_scan_at AS lastFullScanAt,
+              last_incremental_sync_at AS lastIncrementalSyncAt,
+              updated_at AS updatedAt
+       FROM gmail_sync_state WHERE account_email = ? LIMIT 1`,
+      [session.email],
+    );
     const requestedCoverage = rangeStartTimestamp(
       range,
       requestUrl.searchParams.get("after"),
     );
     const coverageStartAt = existingState?.coverageStartAt == null
       ? requestedCoverage
-      : Math.min(existingState.coverageStartAt, requestedCoverage);
+      : Math.min(Number(existingState.coverageStartAt), requestedCoverage);
     const state = {
       accountEmail: session.email,
       historyId: syncStartHistoryId ?? existingState?.historyId ?? null,
@@ -222,18 +229,25 @@ export async function GET(request: Request) {
       lastIncrementalSyncAt: existingState?.lastIncrementalSyncAt ?? null,
       updatedAt: now,
     };
-    await db
-      .insert(gmailSyncState)
-      .values(state)
-      .onConflictDoUpdate({
-        target: gmailSyncState.accountEmail,
-        set: {
-          historyId: state.historyId,
-          coverageStartAt: state.coverageStartAt,
-          lastFullScanAt: state.lastFullScanAt,
-          updatedAt: state.updatedAt,
-        },
-      });
+    await execute(
+      `INSERT INTO gmail_sync_state
+       (account_email, history_id, coverage_start_at, last_full_scan_at,
+        last_incremental_sync_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         history_id = VALUES(history_id),
+         coverage_start_at = VALUES(coverage_start_at),
+         last_full_scan_at = VALUES(last_full_scan_at),
+         updated_at = VALUES(updated_at)`,
+      [
+        state.accountEmail,
+        state.historyId,
+        state.coverageStartAt,
+        state.lastFullScanAt,
+        state.lastIncrementalSyncAt,
+        state.updatedAt,
+      ],
+    );
     await verifyUnsubscribeHistory(session.email);
   }
 
