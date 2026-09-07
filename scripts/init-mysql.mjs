@@ -26,6 +26,16 @@ const connection = await mysql.createConnection({
 
 try {
   await connection.query(schema);
+  const [columns] = await connection.query(
+    `SELECT COUNT(*) AS count FROM information_schema.columns
+     WHERE table_schema = ? AND table_name = 'indexed_messages' AND column_name = 'mailbox_folder'`,
+    [process.env.MYSQL_DATABASE ?? "spamkill"],
+  );
+  if (Number(columns[0]?.count ?? 0) === 0) {
+    await connection.query(
+      "ALTER TABLE indexed_messages ADD COLUMN mailbox_folder VARCHAR(32) CHARACTER SET utf8mb4 NOT NULL DEFAULT 'Bandeja de entrada' AFTER has_unsubscribe",
+    );
+  }
   console.log(`MySQL listo: ${process.env.MYSQL_DATABASE ?? "spamkill"}`);
 } finally {
   await connection.end();

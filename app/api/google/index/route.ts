@@ -40,6 +40,10 @@ type IndexRow = RowDataPacket & {
   globalVotes: number | string | null;
   globalTotalVotes: number | string | null;
   isSafe: number | string;
+  spamCount: number | string;
+  trashCount: number | string;
+  inboxCount: number | string;
+  archivedCount: number | string;
 };
 
 type SyncStateRow = RowDataPacket & {
@@ -112,6 +116,10 @@ export async function GET(request: Request) {
             MAX(gc.global_votes) AS globalVotes,
             MAX(gc.global_total_votes) AS globalTotalVotes,
             MAX(CASE WHEN sp.is_safe = 1 THEN 1 ELSE 0 END) AS isSafe
+            ,SUM(CASE WHEN im.mailbox_folder = 'Spam' THEN 1 ELSE 0 END) AS spamCount
+            ,SUM(CASE WHEN im.mailbox_folder = 'Papelera' THEN 1 ELSE 0 END) AS trashCount
+            ,SUM(CASE WHEN im.mailbox_folder = 'Bandeja de entrada' THEN 1 ELSE 0 END) AS inboxCount
+            ,SUM(CASE WHEN im.mailbox_folder = 'Archivado' THEN 1 ELSE 0 END) AS archivedCount
        FROM indexed_messages im
        LEFT JOIN sender_preferences sp
          ON sp.account_email = im.account_email AND sp.sender_email = im.sender_email
@@ -196,6 +204,13 @@ export async function GET(request: Request) {
     const globalCorrected = !corrected && Boolean(globalCategory);
     const category = safe ? "Notificaciones" : row.manualCategory ?? globalCategory ?? detectedCategory;
     const name = String(row.name || row.id);
+    const folder = Number(row.spamCount) > 0
+      ? "Spam"
+      : Number(row.trashCount) > 0
+        ? "Papelera"
+        : Number(row.inboxCount) > 0
+          ? "Bandeja de entrada"
+          : "Archivado";
     return {
       id: row.id,
       name,
@@ -222,6 +237,7 @@ export async function GET(request: Request) {
       unsub: Boolean(Number(row.unsub)),
       primaryMessageId: row.primaryMessageId,
       latestAt: Number(row.latestAt ?? 0),
+      folder,
     };
   });
 

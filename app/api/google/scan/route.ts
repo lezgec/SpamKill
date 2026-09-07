@@ -38,6 +38,7 @@ type SenderGroup = {
   unsub: boolean;
   primaryMessageId: string;
   latestAt: number;
+  folder: string;
 };
 type SyncStateRow = RowDataPacket & {
   historyId: string | null;
@@ -54,6 +55,11 @@ function formatDate(internalDate?: string): string {
   return new Intl.DateTimeFormat("es", { day: "numeric", month: "short" }).format(
     new Date(timestamp),
   );
+}
+
+function mailboxFolder(message: GmailMessage): string {
+  const labels = new Set(message.labelIds ?? []);
+  return labels.has("SPAM") ? "Spam" : labels.has("TRASH") ? "Papelera" : labels.has("INBOX") ? "Bandeja de entrada" : "Archivado";
 }
 
 export async function GET(request: Request) {
@@ -174,6 +180,7 @@ export async function GET(request: Request) {
         existing.latestAt = receivedAt;
         existing.last = formatDate(message.internalDate);
         existing.primaryMessageId = message.id;
+        existing.folder = mailboxFolder(message);
       }
       continue;
     }
@@ -200,6 +207,7 @@ export async function GET(request: Request) {
       unsub: Boolean(gmailHeader(message, "List-Unsubscribe")),
       primaryMessageId: message.id,
       latestAt: Number(message.internalDate ?? 0),
+      folder: mailboxFolder(message),
     });
   }
 

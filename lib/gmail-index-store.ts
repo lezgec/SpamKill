@@ -49,7 +49,7 @@ export async function replaceIndexedMessages(
 
   for (let index = 0; index < values.length; index += 7) {
     const chunk = values.slice(index, index + 7);
-    const rowPlaceholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const rowPlaceholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
     const params = chunk.flatMap((value) => [
       value.id,
       value.accountEmail,
@@ -64,6 +64,7 @@ export async function replaceIndexedMessages(
       value.classificationConfidence,
       value.receivedAt,
       value.hasUnsubscribe ? 1 : 0,
+      value.mailboxFolder,
       value.indexedAt,
       null,
     ]);
@@ -71,7 +72,7 @@ export async function replaceIndexedMessages(
       `INSERT INTO indexed_messages
        (id, account_email, message_id, sender_email, sender_name, sender_domain,
         subject, snippet, category, classification_reason, classification_confidence,
-        received_at, has_unsubscribe, indexed_at, trashed_at)
+        received_at, has_unsubscribe, mailbox_folder, indexed_at, trashed_at)
        VALUES ${rowPlaceholders}`,
       params,
     );

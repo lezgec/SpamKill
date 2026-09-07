@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS indexed_messages (
   classification_confidence VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'low',
   received_at BIGINT NOT NULL,
   has_unsubscribe TINYINT(1) NOT NULL DEFAULT 0,
+  mailbox_folder VARCHAR(32) CHARACTER SET utf8mb4 NOT NULL DEFAULT 'Bandeja de entrada',
   indexed_at BIGINT NOT NULL,
   trashed_at BIGINT NULL,
   PRIMARY KEY (id),

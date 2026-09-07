@@ -26,6 +26,7 @@ type Sender = {
   unsub: boolean;
   primaryMessageId: string;
   latestAt: number;
+  folder?: string;
 };
 type HistoryRecord = {
   id: string;
@@ -141,6 +142,7 @@ function mergeSenderPages(current: Sender[], incoming: Sender[]): Sender[] {
       existing.doubtful = sender.doubtful;
       existing.corrected = sender.corrected;
       existing.safe = sender.safe;
+      existing.folder = sender.folder ?? existing.folder;
     }
   }
   return [...grouped.values()].sort((a, b) => b.count - a.count);
@@ -154,6 +156,12 @@ function pause(milliseconds: number, signal: AbortSignal): Promise<void> {
       reject(new DOMException("Aborted", "AbortError"));
     }, { once: true });
   });
+}
+
+async function readJsonResponse<T extends { error?: string }>(response: Response): Promise<T> {
+  const text = await response.text();
+  if (!text.trim()) return { error: `El servidor no devolvió una respuesta (HTTP ${response.status}).` } as T;
+  try { return JSON.parse(text) as T; } catch { return { error: `Respuesta inválida del servidor (HTTP ${response.status}).` } as T; }
 }
 
 function HistoryView({
@@ -373,6 +381,7 @@ export default function Home() {
   const [preferenceBusy, setPreferenceBusy] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [undoState, setUndoState] = useState<UndoState | null>(null);
+  const [actionProgress, setActionProgress] = useState<{ done: number; total: number } | null>(null);
   const scanAbortRef = useRef<AbortController | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const providerSnapshotsRef = useRef<Partial<Record<"gmail" | "outlook", ProviderSnapshot>>>({});
@@ -449,7 +458,7 @@ export default function Home() {
         };
         while (true) {
           response = await fetch(url, { signal: controller.signal });
-          data = await response.json() as typeof data;
+          data = await readJsonResponse<typeof data>(response);
           if (response.status !== 429) break;
           let seconds = data.retryAfter ?? 60;
           while (seconds > 0) {
@@ -509,7 +518,7 @@ export default function Home() {
     if (after) url.searchParams.set("after", after);
     if (before) url.searchParams.set("before", before);
     const response = await fetch(url);
-    const data = await response.json() as {
+    const data = await readJsonResponse<{
       email?: string;
       groups?: Sender[];
       scanned?: number;
@@ -517,7 +526,7 @@ export default function Home() {
       coverageComplete?: boolean;
       syncedAt?: number | null;
       error?: string;
-    };
+    }>(response);
     if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el índice local.");
     if (provider === "gmail") setGmailEmail(data.email ?? "");
     if (provider === "outlook") setOutlookEmail(data.email ?? "");
@@ -546,12 +555,12 @@ export default function Home() {
 
   const syncMailbox = useCallback(async (): Promise<boolean> => {
     const response = await fetch("/api/google/sync", { method: "POST" });
-    const data = await response.json() as {
+    const data = await readJsonResponse<{
       needsFullSync?: boolean;
       syncedAt?: number;
       retryAfter?: number;
       error?: string;
-    };
+    }>(response);
     if (!response.ok) {
       if (response.status === 429) {
         throw new Error("Mostramos el índice guardado. Gmail pidió una pausa antes de buscar cambios nuevos.");
@@ -659,7 +668,7 @@ export default function Home() {
     try {
       const apiPath = mailApiPath(key);
       const response = await fetch(`/api/${apiPath}/status`);
-      const data = await response.json() as { connected: boolean; configured?: boolean; email?: string; error?: string };
+      const data = await readJsonResponse<{ connected: boolean; configured?: boolean; email?: string; error?: string }>(response);
       if (key === "outlook" && data.configured === false) {
         throw new Error("Configura OUTLOOK_CLIENT_ID y OUTLOOK_CLIENT_SECRET para conectar Outlook.");
       }
@@ -705,12 +714,12 @@ export default function Home() {
       if (customBefore) url.searchParams.set("before", customBefore);
       if (pageToken) url.searchParams.set("pageToken", pageToken);
       const response = await fetch(url);
-      const data = await response.json() as {
+      const data = await readJsonResponse<{
         messages?: DetailMessage[];
         nextPageToken?: string | null;
         resultSizeEstimate?: number;
         error?: string;
-      };
+      }>(response);
       if (!response.ok) throw new Error(data.error ?? "No se pudieron cargar los correos.");
       setDetailMessages((current) => append ? [...current, ...(data.messages ?? [])] : (data.messages ?? []));
       setDetailPageToken(data.nextPageToken ?? null);
@@ -746,7 +755,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ senderEmail: sender.id, category, safe }),
       });
-      const data = await response.json() as { error?: string };
+      const data = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(data.error ?? "No se pudo guardar la preferencia.");
 
       const detectedCategory = sender.detectedCategory ?? sender.category;
@@ -821,13 +830,13 @@ export default function Home() {
           }],
         }),
       });
-      const data = await response.json() as {
+      const data = await readJsonResponse<{
         unsubscribed?: number;
         manual?: number;
         trashed?: number;
         trashedGroups?: TrashGroup[];
         error?: string;
-      };
+      }>(response);
       if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
       if (provider === "gmail" || provider === "outlook") delete providerSnapshotsRef.current[provider];
       if (action === "trash") {
@@ -882,7 +891,7 @@ export default function Home() {
         }
       }
       const response = await fetch(`/api/${mailApiPath(provider)}/history`);
-      const data = await response.json() as { history?: HistoryRecord[]; error?: string };
+      const data = await readJsonResponse<{ history?: HistoryRecord[]; error?: string }>(response);
       if (!response.ok) throw new Error(data.error ?? "No se pudo cargar el historial.");
       setHistory(data.history ?? []);
     } catch (reason) {
@@ -906,6 +915,7 @@ export default function Home() {
       detailSender,
     };
     setBusy(true);
+    setActionProgress({ done: 0, total: chosen.length });
     setError("");
     const totals = { unsubscribed: 0, manual: 0, trashed: 0 };
     const trashedGroups: TrashGroup[] = [];
@@ -929,13 +939,14 @@ export default function Home() {
             })),
           }),
         });
-        const data = await response.json() as { unsubscribed?: number; manual?: number; trashed?: number; trashedGroups?: TrashGroup[]; error?: string };
+        const data = await readJsonResponse<{ unsubscribed?: number; manual?: number; trashed?: number; trashedGroups?: TrashGroup[]; error?: string }>(response);
         if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
         totals.unsubscribed += data.unsubscribed ?? 0;
         totals.manual += data.manual ?? 0;
         totals.trashed += data.trashed ?? 0;
         trashedGroups.push(...(data.trashedGroups ?? []));
         processedSenderIds.push(...batch.map((sender) => sender.id));
+        setActionProgress({ done: processedSenderIds.length, total: chosen.length });
       }
       if (action === "unsubscribe_and_trash" && trashedGroups.length) {
         setUndoState({ ...undoSnapshot, groups: trashedGroups });
@@ -965,6 +976,7 @@ export default function Home() {
       setError(reason instanceof Error ? reason.message : "No se pudo completar la acción.");
     } finally {
       setBusy(false);
+      setActionProgress(null);
     }
   };
 
@@ -991,7 +1003,7 @@ export default function Home() {
             groups: snapshot.groups.slice(index, index + 20),
           }),
         });
-        const data = await response.json() as { restored?: number; error?: string };
+        const data = await readJsonResponse<{ restored?: number; error?: string }>(response);
         if (!response.ok) throw new Error(data.error ?? "No se pudieron restaurar los correos.");
         restored += data.restored ?? 0;
       }
@@ -1111,6 +1123,13 @@ export default function Home() {
         </header>
 
         {error && <div className="error-banner dashboard-error">{error}</div>}
+        {loading && (
+          <section className="analysis-progress-card" aria-live="polite">
+            <div className="analysis-progress-copy"><span className="loader" /><div><strong>Analizando {rangeLabels[scanRange].toLowerCase()}</strong><small>Procesados {scanned}{estimate ? ` de aproximadamente ${estimate}` : ""}. Puedes detener el análisis cuando quieras.</small></div><b>{estimate ? `${Math.min(100, Math.round((scanned / estimate) * 100))}%` : "…"}</b></div>
+            <div className="analysis-progress-track"><i style={{ width: estimate ? `${Math.min(100, Math.round((scanned / estimate) * 100))}%` : "12%" }} /></div>
+            <button onClick={() => scanAbortRef.current?.abort()}>Detener análisis</button>
+          </section>
+        )}
         <section className="stats">
           <article><span className="stat-icon violet"><Icon name="spark" /></span><div><small>Mensajes analizados</small><strong>{scanned}</strong><em>{rangeLabels[scanRange]}</em></div></article>
           <article><span className="stat-icon orange">%</span><div><small>Publicidad</small><strong>{advertising}</strong><em>Detección inicial</em></div></article>
@@ -1171,7 +1190,7 @@ export default function Home() {
 
           <div className="table-head">
             <label><input type="checkbox" checked={selectableRows.length > 0 && selectableRows.every((row) => selected.includes(row.id))} onChange={() => setSelected(selectableRows.every((row) => selected.includes(row.id)) ? [] : selectableRows.map((row) => row.id))} /> Remitente</label>
-            <span>Categoría</span><span>Mensajes</span><span>Último</span><span>Desuscripción</span>
+            <span>Categoría</span><span>Mensajes</span><span>Último / carpeta</span><span>Desuscripción</span>
           </div>
 
           <div className="sender-list">
@@ -1201,7 +1220,7 @@ export default function Home() {
                   </small>
                 </span>
                 <strong className="message-count">{sender.count}</strong>
-                <span className="last-date">{sender.last}</span>
+                <span className="last-date"><b>{sender.last}</b><small className={`mailbox-folder ${(sender.folder ?? "").toLowerCase().replaceAll(" ", "-")}`}>{sender.folder ?? "Bandeja de entrada"}</small></span>
                 <span className={sender.unsub ? "available" : "manual"}>{sender.unsub ? "✓ Disponible" : "Manual"}</span>
               </div>
             ))}
@@ -1209,7 +1228,7 @@ export default function Home() {
 
           {selected.length > 0 && (
             <div className="action-bar">
-              <div><strong>{selected.length} remitentes seleccionados</strong><small>{chosenCount} mensajes afectados</small></div>
+              <div className="action-summary"><strong>{selected.length} remitentes seleccionados</strong><small>{chosenCount} mensajes afectados</small>{actionProgress && <span className="action-progress"><i style={{ width: `${Math.round((actionProgress.done / actionProgress.total) * 100)}%` }} /></span>}{actionProgress && <small>Procesando {actionProgress.done} de {actionProgress.total}</small>}</div>
               <button disabled={busy} className="unsubscribe" onClick={() => setPendingAction({ scope: "bulk", action: "unsubscribe" })}><Icon name="ban" /> {busy ? "Procesando..." : "Desuscribir"}</button>
               <button disabled={busy} className="delete" onClick={() => setPendingAction({ scope: "bulk", action: "unsubscribe_and_trash" })}><Icon name="trash" /> Desuscribir y limpiar</button>
             </div>

@@ -104,6 +104,14 @@ export function indexedMessageValues(accountEmail: string, message: GmailMessage
   if (!fromValue) return null;
   const sender = senderFrom(fromValue);
   const classification = classificationFor(message, fromValue);
+  const labels = new Set(message.labelIds ?? []);
+  const mailboxFolder = labels.has("SPAM")
+    ? "Spam"
+    : labels.has("TRASH")
+      ? "Papelera"
+      : labels.has("INBOX")
+        ? "Bandeja de entrada"
+        : "Archivado";
   return {
     id: `${accountEmail}:${message.id}`,
     accountEmail,
@@ -118,6 +126,7 @@ export function indexedMessageValues(accountEmail: string, message: GmailMessage
     classificationConfidence: classification.confidence,
     receivedAt: messageTimestamp(message.internalDate),
     hasUnsubscribe: Boolean(gmailHeader(message, "List-Unsubscribe")) || /unsubscribe|opt[\s-]?out|cancelar\s+(?:la\s+)?suscripci[oó]n|darse\s+de\s+baja|desuscrib|dejar\s+de\s+recibir|manage\s+(?:email\s+)?preferences|preferencias\s+(?:de\s+)?(?:correo|comunicaci[oó]n|suscripci[oó]n)/i.test(message.snippet ?? ""),
+    mailboxFolder,
     indexedAt: Date.now(),
   };
 }

@@ -19,6 +19,9 @@ type IndexRow = RowDataPacket & {
   classificationReason: string;
   classificationConfidence: "high" | "medium" | "low";
   primaryMessageId: string;
+  spamCount: number | string;
+  trashCount: number | string;
+  inboxCount: number | string;
 };
 
 export async function GET(request: Request) {
@@ -52,6 +55,9 @@ export async function GET(request: Request) {
             MAX(im.classification_reason) AS classificationReason,
             MAX(im.classification_confidence) AS classificationConfidence,
             MAX(im.message_id) AS primaryMessageId
+            ,SUM(CASE WHEN im.mailbox_folder = 'Spam' THEN 1 ELSE 0 END) AS spamCount
+            ,SUM(CASE WHEN im.mailbox_folder = 'Papelera' THEN 1 ELSE 0 END) AS trashCount
+            ,SUM(CASE WHEN im.mailbox_folder = 'Bandeja de entrada' THEN 1 ELSE 0 END) AS inboxCount
        FROM indexed_messages im
        LEFT JOIN sender_preferences sp
          ON sp.account_email = im.account_email AND sp.sender_email = im.sender_email
@@ -99,6 +105,7 @@ export async function GET(request: Request) {
       const rawLatestAt = Number(group.latestAt ?? 0);
       const latestAt = Number.isFinite(rawLatestAt) && rawLatestAt > 0 ? rawLatestAt : 0;
       const name = String(group.name || group.id);
+      const folder = Number(group.spamCount) > 0 ? "Spam" : Number(group.trashCount) > 0 ? "Papelera" : Number(group.inboxCount) > 0 ? "Bandeja de entrada" : "Archivado";
       return {
         id: group.id,
         name,
@@ -119,6 +126,7 @@ export async function GET(request: Request) {
         unsub: Boolean(Number(group.unsub)),
         primaryMessageId: group.primaryMessageId,
         latestAt,
+        folder,
       };
     }),
     scanned: total,

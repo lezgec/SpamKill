@@ -175,6 +175,23 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
 .footer-copy { color: #959caa; font-size: 8px; text-align: center; margin: 15px 0 0; }
 .error-banner { max-width: 580px; margin: -18px auto 20px; border: 1px solid #f0c9c5; background: #fff3f1; color: #a3443b; border-radius: 10px; padding: 11px 14px; text-align: left; font-size: 11px; line-height: 1.45; }
 .dashboard-error { margin: -10px 0 18px; max-width: none; }
+.analysis-progress-card { position: relative; background: white; border: 1px solid #ded8fa; border-radius: 14px; padding: 16px 19px; margin: -2px 0 18px; box-shadow: 0 8px 25px rgba(73,54,153,.08); }
+.analysis-progress-copy { display: flex; align-items: center; gap: 11px; }
+.analysis-progress-copy > div { display: grid; gap: 4px; min-width: 0; }
+.analysis-progress-copy strong { font-size: 11px; }
+.analysis-progress-copy small { color: #7d8798; font-size: 9px; }
+.analysis-progress-copy b { margin-left: auto; color: var(--purple); font-size: 13px; }
+.analysis-progress-track { height: 7px; background: #ece9f9; border-radius: 100px; overflow: hidden; margin: 12px 0 9px 30px; }
+.analysis-progress-track i { display: block; height: 100%; background: linear-gradient(90deg, #7354ff, #a48fff); border-radius: inherit; transition: width .3s ease; }
+.analysis-progress-card > button { border: 0; background: transparent; color: #8a6ae8; font-size: 8px; cursor: pointer; margin-left: 30px; }
+.last-date b, .last-date small { display: block; }
+.mailbox-folder { color: #818b9c; font-size: 7px; margin-top: 4px; white-space: nowrap; }
+.mailbox-folder.spam { color: #b3473f; }
+.mailbox-folder.papelera { color: #8b5d8e; }
+.mailbox-folder.bandeja-de-entrada { color: #2d9b69; }
+.action-summary { min-width: 190px; }
+.action-progress { display: block; height: 4px; background: #4b5366; border-radius: 100px; overflow: hidden; margin-top: 7px; }
+.action-progress i { display: block; height: 100%; background: #a18bff; border-radius: inherit; transition: width .25s ease; }
 .loading-state, .empty-state { min-height: 250px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #7f8898; font-size: 11px; }
 .loader { width: 19px; height: 19px; border: 2px solid #e3ddff; border-top-color: var(--purple); border-radius: 50%; animation: spin .8s linear infinite; }
 .action-bar button:disabled { opacity: .6; cursor: wait; }
@@ -374,7 +391,9 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
   .sender-row { grid-template-columns: minmax(160px, 1fr) auto; padding: 10px 12px; }
   .classification-actions button.safe-toggle { margin-left: 0; }
   .sender-row > .message-count, .sender-row > .last-date, .sender-row > .available, .sender-row > .manual { display: none; }
-  .action-bar div { display: none; }
-  .action-bar { justify-content: center; }
-  .action-bar button { flex: 1; justify-content: center; }
+  .action-bar { flex-wrap: wrap; padding: 10px; }
+  .action-summary { width: 100%; min-width: 0; }
+  .action-bar button { flex: 1; min-width: 0; justify-content: center; }
+  .analysis-progress-card { padding: 14px; }
+  .analysis-progress-copy small { white-space: normal; }
 }

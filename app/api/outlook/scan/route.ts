@@ -23,6 +23,7 @@ type GraphMessage = {
   from?: { emailAddress?: { name?: string; address?: string } };
   internetMessageHeaders?: Array<{ name: string; value: string }>;
   inferenceClassification?: string;
+  parentFolderId?: string;
   isDraft?: boolean;
 };
 type SenderGroup = {
@@ -44,6 +45,7 @@ type SenderGroup = {
   unsub: boolean;
   primaryMessageId: string;
   latestAt: number;
+  folder: string;
 };
 
 const palette = ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"];
@@ -69,7 +71,12 @@ function outlookMessageToGmail(message: GraphMessage): GmailMessage {
     internalDate: String(outlookTimestamp(message.receivedDateTime)),
     snippet: message.bodyPreview ?? "",
     payload: { headers },
-    labelIds: message.inferenceClassification === "other" ? ["CATEGORY_PROMOTIONS"] : [],
+    labelIds: [
+      ...(message.inferenceClassification === "other" ? ["CATEGORY_PROMOTIONS"] : []),
+      ...((message.parentFolderId ?? "").toLowerCase().includes("junk") || (message.parentFolderId ?? "").toLowerCase().includes("spam") ? ["SPAM"] : []),
+      ...((message.parentFolderId ?? "").toLowerCase().includes("trash") || (message.parentFolderId ?? "").toLowerCase().includes("deleted") ? ["TRASH"] : []),
+      ...((message.parentFolderId ?? "").toLowerCase().includes("inbox") ? ["INBOX"] : []),
+    ],
   };
 }
 
@@ -92,6 +99,14 @@ function outlookFilter(range: ScanRange, after?: string | null, before?: string 
   return clauses.join(" and ");
 }
 
+function outlookFolder(message: GraphMessage): string {
+  const folder = (message.parentFolderId ?? "").toLowerCase();
+  if (folder.includes("junk") || folder.includes("spam")) return "Spam";
+  if (folder.includes("trash") || folder.includes("deleted")) return "Papelera";
+  if (folder.includes("inbox")) return "Bandeja de entrada";
+  return "Archivado";
+}
+
 async function listMessages(
   session: OutlookSession,
   nextLink: string | null,
@@ -102,7 +117,7 @@ async function listMessages(
   const url = nextLink ?? (() => {
     const query = new URLSearchParams({
       "$top": "50",
-      "$select": "id,subject,bodyPreview,receivedDateTime,from,internetMessageHeaders,inferenceClassification,isDraft",
+      "$select": "id,subject,bodyPreview,receivedDateTime,from,internetMessageHeaders,inferenceClassification,parentFolderId,isDraft",
       "$orderby": "receivedDateTime desc",
       "$filter": outlookFilter(range, after, before),
     });
@@ -152,6 +167,7 @@ export async function GET(request: Request) {
           existing.latestAt = receivedAt;
           existing.last = formatDate(message.internalDate);
           existing.primaryMessageId = message.id;
+          existing.folder = outlookFolder(message);
           existing.category = classification.category;
           existing.detectedCategory = classification.category;
           existing.detectedReason = classificationReasonText(classification.reason);
@@ -182,6 +198,7 @@ export async function GET(request: Request) {
         unsub: Boolean(gmailHeader(message, "List-Unsubscribe")) || classification.reason === "unsubscribe_content",
         primaryMessageId: message.id,
         latestAt: receivedAt,
+        folder: outlookFolder(message),
       });
     }
 
