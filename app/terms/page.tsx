@@ -34,7 +34,7 @@ export default function TermsPage() {
         <p>El servicio puede cambiar, interrumpirse o dejar de estar disponible. No garantizamos que todos los mensajes, enlaces de desuscripción o proveedores sean compatibles en todo momento.</p>
 
         <h2>6. Contacto</h2>
-        <p>Para preguntas sobre el servicio, escribe a <a href="mailto:zamgarluer@gmail.com">zamgarluer@gmail.com</a>.</p>
+        <p>Para preguntas sobre el servicio, escribe a <a href="mailto:support@luiszamora.dev">support@luiszamora.dev</a>.</p>
       </article>
     </main>
   );

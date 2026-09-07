@@ -34,7 +34,7 @@ export default function PrivacyPage() {
         <p>Gmail y Outlook procesan las solicitudes OAuth y las acciones de correo conforme a sus propias políticas. SpamKill no controla las políticas de Google o Microsoft.</p>
 
         <h2>6. Tus opciones</h2>
-        <p>Puedes desconectar una cuenta, borrar tus datos locales y solicitar la eliminación de tus preferencias. Para ayuda o consultas de privacidad, escribe a <a href="mailto:zamgarluer@gmail.com">zamgarluer@gmail.com</a>.</p>
+        <p>Puedes desconectar una cuenta, borrar tus datos locales y solicitar la eliminación de tus preferencias. Para ayuda o consultas de privacidad, escribe a <a href="mailto:support@luiszamora.dev">support@luiszamora.dev</a>.</p>
       </article>
     </main>
   );
