@@ -6,15 +6,16 @@ import {
   outlookProfile,
   outlookTokenRequest,
 } from "@/lib/outlook";
-import { clearCookie, encryptSession, readCookie } from "@/lib/google";
+import { clearCookie, encryptSession, getBaseUrl, readCookie } from "@/lib/google";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const state = requestUrl.searchParams.get("state");
+  const baseUrl = getBaseUrl(request);
   const expectedState = readCookie(request, OUTLOOK_STATE_COOKIE);
   if (!code || !state || !expectedState || state !== expectedState) {
-    return Response.redirect(`${requestUrl.origin}/?outlook_error=invalid_state`, 302);
+    return Response.redirect(`${baseUrl}/?outlook_error=invalid_state`, 302);
   }
 
   try {
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
     session.email = profile.email;
 
     const headers = new Headers({
-      Location: `${requestUrl.origin}/?provider=outlook&connected=1`,
+      Location: `${baseUrl}/?provider=outlook&connected=1`,
     });
     headers.append(
       "Set-Cookie",
@@ -61,7 +62,7 @@ export async function GET(request: Request) {
     return new Response(null, { status: 302, headers });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error inesperado.";
-    const url = new URL("/", requestUrl.origin);
+    const url = new URL("/", baseUrl);
     url.searchParams.set("outlook_error", message);
     return Response.redirect(url, 302);
   }

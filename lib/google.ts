@@ -86,7 +86,10 @@ export function createCookie(
   value: string,
   maxAge: number,
 ): string {
-  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  // Verificamos si la URL real usa HTTPS
+  const isHttps = getBaseUrl(request).startsWith("https://");
+  const secure = isHttps ? "; Secure" : "";
+
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
 
@@ -97,13 +100,18 @@ export function clearCookie(request: Request, name: string): string {
 export function googleConfig(request: Request) {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+
   if (!clientId || !clientSecret) {
     throw new Error("Las credenciales OAuth de Google no están configuradas.");
   }
+
+  // Obtenemos la URL real basándonos en el entorno
+  const baseUrl = getBaseUrl(request);
+
   return {
     clientId,
     clientSecret,
-    redirectUri: `${new URL(request.url).origin}/api/google/callback`,
+    redirectUri: `${baseUrl}/api/google/callback`,
   };
 }
 
@@ -422,4 +430,17 @@ export function rangeStartTimestamp(range: ScanRange, after?: string | null): nu
   if (range === "1y") return now - 365 * 24 * 60 * 60 * 1000;
   if (range === "custom" && validDate(after)) return new Date(`${after}T00:00:00Z`).getTime();
   return now;
+}
+export function getBaseUrl(request: Request): string {
+  // 1. Priorizar variable de entorno (la forma más segura y recomendada)
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
+
+  // 2. Si no hay variable, leer los headers del proxy
+  const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
+  const proto = request.headers.get("x-forwarded-proto") || "http";
+
+  if (host) return `${proto}://${host}`;
+
+  // 3. Fallback final al request.url si no hay proxy
+  return new URL(request.url).origin;
 }

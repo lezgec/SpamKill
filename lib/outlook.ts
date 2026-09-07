@@ -3,6 +3,7 @@ import {
   createCookie,
   decryptSession,
   encryptSession,
+  getBaseUrl,
   jsonWithSession,
   randomState,
   readCookie,
@@ -39,7 +40,7 @@ export function outlookConfig(request: Request) {
   return {
     clientId,
     clientSecret,
-    redirectUri: `${new URL(request.url).origin}/api/outlook/callback`,
+    redirectUri: `${getBaseUrl(request)}/api/outlook/callback`,
   };
 }
 

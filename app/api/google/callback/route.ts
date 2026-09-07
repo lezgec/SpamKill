@@ -6,6 +6,7 @@ import {
   encryptSession,
   googleApiError,
   googleConfig,
+  getBaseUrl,
   readCookie,
   type GoogleSession,
 } from "@/lib/google";
@@ -14,10 +15,11 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const state = requestUrl.searchParams.get("state");
+  const baseUrl = getBaseUrl(request);
   const expectedState = readCookie(request, GOOGLE_STATE_COOKIE);
 
   if (!code || !state || !expectedState || state !== expectedState) {
-    return Response.redirect(`${requestUrl.origin}/?google_error=invalid_state`, 302);
+    return Response.redirect(`${baseUrl}/?google_error=invalid_state`, 302);
   }
 
   try {
@@ -60,7 +62,7 @@ export async function GET(request: Request) {
     };
 
     const headers = new Headers({
-      Location: `${requestUrl.origin}/?provider=gmail&connected=1`,
+      Location: `${baseUrl}/?provider=gmail&connected=1`,
     });
     headers.append(
       "Set-Cookie",
@@ -75,7 +77,7 @@ export async function GET(request: Request) {
     return new Response(null, { status: 302, headers });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error inesperado.";
-    const url = new URL("/", requestUrl.origin);
+    const url = new URL("/", baseUrl);
     url.searchParams.set("google_error", message);
     return Response.redirect(url, 302);
   }
