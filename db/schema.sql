@@ -73,3 +73,17 @@ CREATE TABLE IF NOT EXISTS sender_classification_votes (
   PRIMARY KEY (account_email, sender_email),
   KEY sender_classification_sender_idx (sender_email, category)
 ) ENGINE=InnoDB;
+
+INSERT INTO sender_classification_votes
+  (account_email, sender_email, sender_domain, category, updated_at)
+SELECT account_email,
+       sender_email,
+       SUBSTRING_INDEX(sender_email, '@', -1),
+       manual_category,
+       updated_at
+  FROM sender_preferences
+ WHERE manual_category IS NOT NULL AND is_safe = 0
+ON DUPLICATE KEY UPDATE
+  sender_domain = VALUES(sender_domain),
+  category = VALUES(category),
+  updated_at = VALUES(updated_at);
