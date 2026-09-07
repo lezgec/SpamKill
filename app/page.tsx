@@ -1202,7 +1202,7 @@ export default function Home() {
                   <input aria-label={`Seleccionar ${sender.name}`} title={sender.safe ? "Remitente protegido por la lista segura" : undefined} type="checkbox" disabled={sender.safe} checked={selected.includes(sender.id)} onChange={() => toggle(sender.id)} />
                   <button className="sender-open" onClick={() => openSender(sender)}>
                     <i style={{ background: sender.color }}>{sender.initials}</i>
-                    <span><strong>{sender.name}</strong><small>{sender.domain} · Ver correos</small></span>
+                    <span><strong>{sender.name}</strong><small>{sender.domain} · {sender.folder ?? "Bandeja de entrada"} · Ver correos</small></span>
                   </button>
                 </span>
                 <span className="category-control">
