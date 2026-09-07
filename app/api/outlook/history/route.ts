@@ -14,8 +14,7 @@ export async function GET(request: Request) {
             manual_url AS manualUrl
      FROM unsubscribe_history
      WHERE account_email = ?
-     ORDER BY requested_at DESC
-     LIMIT 100`,
+     ORDER BY requested_at DESC`,
     [outlookAccountKey(session.email)],
   );
   return jsonWithSession({ history: rows }, 200, setCookie);
