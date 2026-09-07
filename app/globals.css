@@ -34,6 +34,7 @@ svg { width: 20px; height: 20px; }
 .provider-card { border: 1px solid var(--line); background: rgba(255,255,255,.9); border-radius: 17px; padding: 22px 18px; text-align: left; cursor: pointer; display: grid; grid-template-columns: 46px 1fr 18px; align-items: center; gap: 12px; transition: .2s ease; box-shadow: 0 8px 28px rgba(31, 40, 70, .06); }
 .provider-card:hover { transform: translateY(-4px); border-color: #bfb1fa; box-shadow: 0 15px 35px rgba(70, 53, 140, .12); }
 .provider-card:disabled { opacity: .62; cursor: wait; transform: none; }
+.provider-card.icloud:disabled { cursor: not-allowed; }
 .provider-logo, .account-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-weight: 800; background: #f2f3f7; }
 .provider-card.gmail .provider-logo, .account-mark.gmail { color: #e1493f; background: #fff0ef; }
 .provider-card.outlook .provider-logo, .account-mark.outlook { color: #1876d2; background: #eaf4ff; }

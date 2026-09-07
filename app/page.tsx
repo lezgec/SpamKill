@@ -937,9 +937,16 @@ export default function Home() {
             {(Object.keys(providers) as Provider[]).map((key) => {
               const item = providers[key];
               return (
-                <button key={key} className={`provider-card ${item.tone}`} onClick={() => chooseProvider(key)} disabled={loading}>
+                <button
+                  key={key}
+                  className={`provider-card ${item.tone}`}
+                  onClick={() => chooseProvider(key)}
+                  disabled={loading || key === "icloud"}
+                  aria-disabled={key === "icloud"}
+                  title={key === "icloud" ? "iCloud estará disponible cuando se configure su integración." : undefined}
+                >
                   <span className="provider-logo">{item.mark}</span>
-                  <span><strong>{loading && (key === "gmail" || key === "outlook") ? "Conectando..." : `Continuar con ${item.name}`}</strong><small>{key === "icloud" ? "Integración posterior" : "Conectar cuenta real de forma segura"}</small></span>
+                  <span><strong>{key === "icloud" ? "iCloud (próximamente)" : loading ? "Conectando..." : `Continuar con ${item.name}`}</strong><small>{key === "icloud" ? "Integración no configurada todavía" : "Conectar cuenta real de forma segura"}</small></span>
                   <Icon name="chevron" />
                 </button>
               );
