@@ -666,6 +666,7 @@ export default function Home() {
       };
       setSenders((current) => current.map((item) => item.id === sender.id ? nextSender : item));
       setDetailSender((current) => current?.id === sender.id ? nextSender : current);
+      if (provider === "gmail" || provider === "outlook") delete providerSnapshotsRef.current[provider];
       if (safe) setSelected((current) => current.filter((id) => id !== sender.id));
       showNotice(safe
         ? `${sender.name} se añadió a remitentes seguros.`
@@ -727,6 +728,7 @@ export default function Home() {
         error?: string;
       };
       if (!response.ok) throw new Error(data.error ?? "No se pudo completar la acción.");
+      if (provider === "gmail" || provider === "outlook") delete providerSnapshotsRef.current[provider];
       if (action === "trash") {
         const removed = new Set(detailSelected);
         setDetailMessages((current) => current.filter((message) => !removed.has(message.id)));
@@ -843,6 +845,7 @@ export default function Home() {
       if (action === "unsubscribe_and_trash") {
         setSenders((current) => current.filter((sender) => !selected.includes(sender.id)));
       }
+      if (provider === "gmail" || provider === "outlook") delete providerSnapshotsRef.current[provider];
       setSelected([]);
     } catch (reason) {
       if (processedSenderIds.length) {
@@ -894,6 +897,7 @@ export default function Home() {
         throw new Error(`Gmail solo pudo restaurar ${restored} de ${expected} correos.`);
       }
       setSenders(snapshot.senders);
+      if (provider === "gmail" || provider === "outlook") delete providerSnapshotsRef.current[provider];
       setDetailMessages(snapshot.detailMessages);
       setDetailSender(snapshot.detailSender);
       setDetailSelected([]);
