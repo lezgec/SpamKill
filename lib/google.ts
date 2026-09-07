@@ -400,7 +400,7 @@ export function buildMailboxQuery({
   before?: string | null;
   sender?: string | null;
 }): string {
-  const terms = ["-in:sent", "-in:drafts", "-in:spam", "-in:trash"];
+  const terms = ["in:anywhere", "-in:sent", "-in:drafts"];
   if (range === "30d") terms.push("newer_than:30d");
   if (range === "90d") terms.push("newer_than:90d");
   if (range === "1y") terms.push("newer_than:1y");

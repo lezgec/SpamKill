@@ -27,7 +27,7 @@ type HistoryPage = {
 };
 type SyncStateRow = RowDataPacket & { historyId: string | null };
 
-const excludedLabels = new Set(["SENT", "DRAFT", "SPAM", "TRASH"]);
+const excludedLabels = new Set(["SENT", "DRAFT"]);
 
 function touchedIds(page: HistoryPage): string[] {
   const ids = new Set<string>();
