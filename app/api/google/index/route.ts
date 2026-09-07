@@ -36,6 +36,9 @@ type IndexRow = RowDataPacket & {
   unsub: number | string;
   primaryMessageId: string;
   manualCategory: ManualCategory | null;
+  globalCategory: ManualCategory | null;
+  globalVotes: number | string | null;
+  globalTotalVotes: number | string | null;
   isSafe: number | string;
 };
 
@@ -105,10 +108,36 @@ export async function GET(request: Request) {
             MAX(CASE WHEN im.has_unsubscribe = 1 THEN 1 ELSE 0 END) AS unsub,
             COALESCE(MAX(CASE WHEN im.has_unsubscribe = 1 THEN im.message_id END), MAX(im.message_id)) AS primaryMessageId,
             MAX(sp.manual_category) AS manualCategory,
+            MAX(gc.global_category) AS globalCategory,
+            MAX(gc.global_votes) AS globalVotes,
+            MAX(gc.global_total_votes) AS globalTotalVotes,
             MAX(CASE WHEN sp.is_safe = 1 THEN 1 ELSE 0 END) AS isSafe
        FROM indexed_messages im
        LEFT JOIN sender_preferences sp
          ON sp.account_email = im.account_email AND sp.sender_email = im.sender_email
+       LEFT JOIN (
+         SELECT ranked.sender_email,
+                ranked.category AS global_category,
+                ranked.votes AS global_votes,
+                totals.total_votes AS global_total_votes
+           FROM (
+             SELECT sender_email, category, COUNT(*) AS votes,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY sender_email
+                      ORDER BY COUNT(*) DESC, category ASC
+                    ) AS rank_number
+               FROM sender_classification_votes
+              GROUP BY sender_email, category
+           ) ranked
+           JOIN (
+             SELECT sender_email, COUNT(*) AS total_votes
+               FROM sender_classification_votes
+              GROUP BY sender_email
+           ) totals ON totals.sender_email = ranked.sender_email
+          WHERE ranked.rank_number = 1
+            AND ranked.votes >= 2
+            AND ranked.votes * 100 >= totals.total_votes * 60
+       ) gc ON gc.sender_email = im.sender_email
       WHERE im.account_email = ? AND im.trashed_at IS NULL AND im.received_at >= ?${dateClause}
       GROUP BY im.sender_email
       ORDER BY COUNT(im.id) DESC`,
@@ -163,7 +192,9 @@ export async function GET(request: Request) {
         : "high";
     const safe = Boolean(Number(row.isSafe));
     const corrected = Boolean(row.manualCategory);
-    const category = safe ? "Notificaciones" : row.manualCategory ?? detectedCategory;
+    const globalCategory = row.globalCategory;
+    const globalCorrected = !corrected && Boolean(globalCategory);
+    const category = safe ? "Notificaciones" : row.manualCategory ?? globalCategory ?? detectedCategory;
     const name = String(row.name || row.id);
     return {
       id: row.id,
@@ -177,10 +208,13 @@ export async function GET(request: Request) {
         ? "Lo marcaste como remitente seguro; nunca se tratará como publicidad."
         : corrected
           ? `Corregiste este remitente como ${row.manualCategory}; recordaremos tu elección.`
+          : globalCorrected
+            ? `La comunidad lo clasificó como ${globalCategory} con ${Number(row.globalVotes)} de ${Number(row.globalTotalVotes)} votos.`
           : classificationReasonText(detectedReason),
-      confidence: safe || corrected ? "high" : detectedConfidence,
-      doubtful: !safe && !corrected && autoDoubtful,
+      confidence: safe || corrected ? "high" : globalCorrected ? "medium" : detectedConfidence,
+      doubtful: !safe && !corrected && !globalCorrected && autoDoubtful,
       corrected,
+      global: globalCorrected,
       safe,
       color: palette[index % palette.length],
       initials: name.slice(0, 2).toUpperCase(),

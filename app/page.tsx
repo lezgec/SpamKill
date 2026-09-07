@@ -18,6 +18,7 @@ type Sender = {
   confidence?: "high" | "medium" | "low";
   doubtful?: boolean;
   corrected?: boolean;
+  global?: boolean;
   safe?: boolean;
   color: string;
   initials: string;
@@ -474,6 +475,7 @@ export default function Home() {
     try {
       if (provider === "outlook") {
         await runScan(range, after, before);
+        await loadCachedRange(range, after, before);
         return;
       }
       const cached = await loadCachedRange(range, after, before);
@@ -770,6 +772,7 @@ export default function Home() {
       if (refresh) {
         if (provider === "outlook") {
           await runScan(scanRange, customAfter, customBefore);
+          await loadCachedRange(scanRange, customAfter, customBefore);
         } else {
           const needsFullSync = await syncMailbox();
           if (needsFullSync) {
@@ -953,6 +956,7 @@ export default function Home() {
             })}
           </div>
           <div className="trust-row"><span>✓ Sin bandeja unificada</span><span>✓ Acciones reversibles</span><span>✓ Tú decides qué eliminar</span></div>
+          <p className="welcome-legal-links"><a href="/privacy">Privacidad</a><span>·</span><a href="/terms">Términos del servicio</a></p>
         </section>
       </main>
     );
@@ -1083,7 +1087,7 @@ export default function Home() {
                     {categoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
                   </select>
                   <small className={sender.doubtful ? "needs-review" : ""}>
-                    {sender.safe ? "Seguro" : sender.corrected ? "Corregida por ti" : sender.doubtful ? "Revisar" : "Automática"}
+                    {sender.safe ? "Seguro" : sender.corrected ? "Corregida por ti" : sender.global ? "Comunidad" : sender.doubtful ? "Revisar" : "Automática"}
                   </small>
                 </span>
                 <strong className="message-count">{sender.count}</strong>

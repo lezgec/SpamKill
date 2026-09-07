@@ -12,6 +12,9 @@ type IndexRow = RowDataPacket & {
   latestAt: number | string | null;
   unsub: number | string;
   manualCategory: ManualCategory | null;
+  globalCategory: ManualCategory | null;
+  globalVotes: number | string | null;
+  globalTotalVotes: number | string | null;
   isSafe: number | string;
   classificationReason: string;
   classificationConfidence: "high" | "medium" | "low";
@@ -42,6 +45,9 @@ export async function GET(request: Request) {
             MAX(im.received_at) AS latestAt,
             MAX(CASE WHEN im.has_unsubscribe = 1 THEN 1 ELSE 0 END) AS unsub,
             MAX(sp.manual_category) AS manualCategory,
+            MAX(gc.global_category) AS globalCategory,
+            MAX(gc.global_votes) AS globalVotes,
+            MAX(gc.global_total_votes) AS globalTotalVotes,
             MAX(CASE WHEN sp.is_safe = 1 THEN 1 ELSE 0 END) AS isSafe,
             MAX(im.classification_reason) AS classificationReason,
             MAX(im.classification_confidence) AS classificationConfidence,
@@ -49,6 +55,29 @@ export async function GET(request: Request) {
        FROM indexed_messages im
        LEFT JOIN sender_preferences sp
          ON sp.account_email = im.account_email AND sp.sender_email = im.sender_email
+       LEFT JOIN (
+         SELECT ranked.sender_email,
+                ranked.category AS global_category,
+                ranked.votes AS global_votes,
+                totals.total_votes AS global_total_votes
+           FROM (
+             SELECT sender_email, category, COUNT(*) AS votes,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY sender_email
+                      ORDER BY COUNT(*) DESC, category ASC
+                    ) AS rank_number
+               FROM sender_classification_votes
+              GROUP BY sender_email, category
+           ) ranked
+           JOIN (
+             SELECT sender_email, COUNT(*) AS total_votes
+               FROM sender_classification_votes
+              GROUP BY sender_email
+           ) totals ON totals.sender_email = ranked.sender_email
+          WHERE ranked.rank_number = 1
+            AND ranked.votes >= 2
+            AND ranked.votes * 100 >= totals.total_votes * 60
+       ) gc ON gc.sender_email = im.sender_email
       WHERE im.account_email = ? AND im.trashed_at IS NULL AND im.received_at >= ?${dateClause}
       GROUP BY im.sender_email
       ORDER BY COUNT(im.id) DESC`,
@@ -64,7 +93,9 @@ export async function GET(request: Request) {
           ? "Newsletters"
           : "Notificaciones";
       const safe = Boolean(Number(group.isSafe));
-      const category = safe ? "Notificaciones" : group.manualCategory ?? detectedCategory;
+      const globalCategory = group.globalCategory;
+      const globalCorrected = !group.manualCategory && Boolean(globalCategory);
+      const category = safe ? "Notificaciones" : group.manualCategory ?? globalCategory ?? detectedCategory;
       const rawLatestAt = Number(group.latestAt ?? 0);
       const latestAt = Number.isFinite(rawLatestAt) && rawLatestAt > 0 ? rawLatestAt : 0;
       const name = String(group.name || group.id);
@@ -76,10 +107,11 @@ export async function GET(request: Request) {
         category,
         detectedCategory,
         detectedReason: classificationReasonText(group.classificationReason as Parameters<typeof classificationReasonText>[0]),
-        classificationReason: safe ? "Lo marcaste como remitente seguro." : group.manualCategory ? `Corregiste este remitente como ${group.manualCategory}.` : classificationReasonText(group.classificationReason as Parameters<typeof classificationReasonText>[0]),
-        confidence: safe || group.manualCategory ? "high" : group.classificationConfidence ?? "low",
-        doubtful: !safe && !group.manualCategory && (group.classificationConfidence ?? "low") === "low",
+        classificationReason: safe ? "Lo marcaste como remitente seguro." : group.manualCategory ? `Corregiste este remitente como ${group.manualCategory}.` : globalCorrected ? `La comunidad lo clasificó como ${globalCategory} con ${Number(group.globalVotes)} de ${Number(group.globalTotalVotes)} votos.` : classificationReasonText(group.classificationReason as Parameters<typeof classificationReasonText>[0]),
+        confidence: safe || group.manualCategory ? "high" : globalCorrected ? "medium" : group.classificationConfidence ?? "low",
+        doubtful: !safe && !group.manualCategory && !globalCorrected && (group.classificationConfidence ?? "low") === "low",
         corrected: Boolean(group.manualCategory),
+        global: globalCorrected,
         safe,
         color: ["#f2612f", "#7b61ff", "#1676b7", "#e74334", "#111827", "#ef9d24"][index % 6],
         initials: name.slice(0, 2).toUpperCase(),

@@ -66,6 +66,11 @@ Registra estos callbacks OAuth:
 - Google: `https://spamkill.luiszamora.dev/api/google/callback`
 - Microsoft Entra: `https://spamkill.luiszamora.dev/api/outlook/callback`
 
+URLs públicas para la información de OAuth:
+
+- Términos del servicio: `https://spamkill.luiszamora.dev/terms`
+- Declaración de privacidad: `https://spamkill.luiszamora.dev/privacy`
+
 ## Comandos útiles
 
 ```powershell

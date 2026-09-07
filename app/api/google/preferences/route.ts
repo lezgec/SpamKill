@@ -1,6 +1,7 @@
 import { execute } from "@/db/mysql";
 import { authorizedGoogleSession, jsonWithSession } from "@/lib/google";
 import type { ManualCategory } from "@/lib/gmail-index";
+import { recordGlobalClassification } from "@/lib/global-classification";
 
 type PreferencePayload = {
   senderEmail?: string;
@@ -54,6 +55,8 @@ export async function POST(request: Request) {
       ],
     );
   }
+
+  await recordGlobalClassification(session.email, senderEmail, safe ? null : category);
 
   return jsonWithSession(
     { senderEmail, category, safe },

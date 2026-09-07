@@ -63,3 +63,13 @@ CREATE TABLE IF NOT EXISTS sender_preferences (
   PRIMARY KEY (id),
   UNIQUE KEY sender_preference_account_sender_idx (account_email, sender_email)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS sender_classification_votes (
+  account_email VARCHAR(320) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  sender_email VARCHAR(320) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  sender_domain VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  category VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  updated_at BIGINT NOT NULL,
+  PRIMARY KEY (account_email, sender_email),
+  KEY sender_classification_sender_idx (sender_email, category)
+) ENGINE=InnoDB;

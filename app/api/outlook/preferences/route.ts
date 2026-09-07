@@ -2,6 +2,7 @@ import { execute } from "@/db/mysql";
 import { authorizedOutlookSession, outlookAccountKey } from "@/lib/outlook";
 import { jsonWithSession } from "@/lib/google";
 import type { ManualCategory } from "@/lib/gmail-index";
+import { recordGlobalClassification } from "@/lib/global-classification";
 
 type PreferencePayload = {
   senderEmail?: string;
@@ -36,5 +37,6 @@ export async function POST(request: Request) {
       now,
     ],
   );
+  await recordGlobalClassification(accountEmail, senderEmail, payload.safe ? null : payload.category ?? null);
   return jsonWithSession({ saved: true }, 200, setCookie);
 }

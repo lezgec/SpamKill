@@ -35,6 +35,22 @@ svg { width: 20px; height: 20px; }
 .provider-card:hover { transform: translateY(-4px); border-color: #bfb1fa; box-shadow: 0 15px 35px rgba(70, 53, 140, .12); }
 .provider-card:disabled { opacity: .62; cursor: wait; transform: none; }
 .provider-card.icloud:disabled { cursor: not-allowed; }
+.legal-page { min-height: 100vh; background: #f7f8fc; color: #182033; padding: 28px 20px 70px; }
+.legal-nav { max-width: 860px; margin: 0 auto 28px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.legal-nav a { color: #57627a; font-size: 13px; text-decoration: none; }
+.legal-nav a:hover { color: #5d45d8; }
+.legal-brand { color: #182033 !important; font-size: 21px !important; font-weight: 800; letter-spacing: -.05em; }
+.legal-brand span { color: #7358e8; }
+.legal-card { max-width: 860px; margin: 0 auto; padding: 42px 48px; background: #fff; border: 1px solid #e3e6ef; border-radius: 24px; box-shadow: 0 18px 55px rgba(31, 40, 70, .07); }
+.legal-eyebrow { margin: 0 0 10px; color: #7056df; font-size: 12px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+.legal-card h1 { margin: 0; font-size: clamp(30px, 5vw, 46px); letter-spacing: -.045em; }
+.legal-updated { margin: 12px 0 36px; color: #8992a6; font-size: 13px; }
+.legal-card h2 { margin: 28px 0 8px; color: #242c42; font-size: 18px; }
+.legal-card p { margin: 0; color: #5f6980; font-size: 15px; line-height: 1.75; }
+.legal-card a { color: #5d45d8; }
+.welcome-legal-links { display: flex; justify-content: center; gap: 9px; margin: 24px 0 0; color: #9aa2b3; font-size: 11px; }
+.welcome-legal-links a { color: #6a58c8; text-decoration: none; }
+@media (max-width: 640px) { .legal-card { padding: 30px 24px; } .legal-nav { margin-bottom: 18px; } }
 .provider-logo, .account-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-weight: 800; background: #f2f3f7; }
 .provider-card.gmail .provider-logo, .account-mark.gmail { color: #e1493f; background: #fff0ef; }
 .provider-card.outlook .provider-logo, .account-mark.outlook { color: #1876d2; background: #eaf4ff; }
