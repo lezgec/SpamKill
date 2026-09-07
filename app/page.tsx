@@ -56,6 +56,16 @@ type UndoState = {
   detailMessages: DetailMessage[];
   detailSender: Sender | null;
 };
+type ProviderSnapshot = {
+  email: string;
+  senders: Sender[];
+  scanned: number;
+  estimate: number;
+  scanRange: ScanRange;
+  customAfter: string;
+  customBefore: string;
+  syncedAt: number | null;
+};
 
 const providers = {
   gmail: { name: "Gmail", email: "Cuenta de Google", mark: "M", tone: "gmail" },
@@ -265,6 +275,23 @@ export default function Home() {
   const [undoState, setUndoState] = useState<UndoState | null>(null);
   const scanAbortRef = useRef<AbortController | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  const providerSnapshotsRef = useRef<Partial<Record<"gmail" | "outlook", ProviderSnapshot>>>({});
+
+  const restoreProviderSnapshot = useCallback((key: "gmail" | "outlook"): boolean => {
+    const snapshot = providerSnapshotsRef.current[key];
+    if (!snapshot) return false;
+    setSenders(snapshot.senders);
+    setScanned(snapshot.scanned);
+    setEstimate(snapshot.estimate);
+    setScanRange(snapshot.scanRange);
+    setCustomAfter(snapshot.customAfter);
+    setCustomBefore(snapshot.customBefore);
+    setCustomOpen(snapshot.scanRange === "custom");
+    setSyncedAt(snapshot.syncedAt);
+    setSelected([]);
+    setLoading(false);
+    return true;
+  }, []);
 
   const showNotice = (message: string, duration = 4200) => {
     if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
@@ -299,6 +326,7 @@ export default function Home() {
     let syncStartHistoryId = "";
     let totalScanned = 0;
     let accumulated: Sender[] = [];
+    let scannedEmail = "";
     let completed = false;
     try {
       do {
@@ -337,6 +365,7 @@ export default function Home() {
         pageToken = data.nextPageToken ?? null;
         syncStartHistoryId = data.syncStartHistoryId ?? syncStartHistoryId;
         setSenders(accumulated);
+        if (data.email) scannedEmail = data.email;
         if (activeProvider === "gmail") setGmailEmail(data.email ?? "");
         if (activeProvider === "outlook") setOutlookEmail(data.email ?? "");
         setScanned(totalScanned);
@@ -349,7 +378,20 @@ export default function Home() {
       setError(reason instanceof Error ? reason.message : "No se pudo analizar Gmail.");
     } finally {
       if (scanAbortRef.current === controller) {
-        if (completed) setSyncedAt(Date.now());
+        if (completed) {
+          const completedAt = Date.now();
+          setSyncedAt(completedAt);
+          providerSnapshotsRef.current[activeProvider] = {
+            email: scannedEmail,
+            senders: accumulated,
+            scanned: totalScanned,
+            estimate: accumulated.reduce((total, sender) => total + sender.count, 0),
+            scanRange: range,
+            customAfter: after,
+            customBefore: before,
+            syncedAt: completedAt,
+          };
+        }
         setLoading(false);
         setQuotaWait(0);
         scanAbortRef.current = null;
@@ -361,7 +403,7 @@ export default function Home() {
     range: ScanRange,
     after = "",
     before = "",
-  ): Promise<boolean> => {
+  ): Promise<{ coverageComplete: boolean; hasData: boolean }> => {
     const url = new URL(`/api/${mailApiPath(provider)}/index`, window.location.origin);
     url.searchParams.set("range", range);
     if (after) url.searchParams.set("after", after);
@@ -383,8 +425,24 @@ export default function Home() {
     setScanned(data.scanned ?? 0);
     setEstimate(data.resultSizeEstimate ?? data.scanned ?? 0);
     setSyncedAt(data.syncedAt ?? null);
-    return Boolean(data.coverageComplete);
-  }, [provider]);
+    setLoading(false);
+    if (provider === "gmail" || provider === "outlook") {
+      providerSnapshotsRef.current[provider] = {
+        email: data.email ?? (provider === "gmail" ? gmailEmail : outlookEmail),
+        senders: data.groups ?? [],
+        scanned: data.scanned ?? 0,
+        estimate: data.resultSizeEstimate ?? data.scanned ?? 0,
+        scanRange: range,
+        customAfter: after,
+        customBefore: before,
+        syncedAt: data.syncedAt ?? null,
+      };
+    }
+    return {
+      coverageComplete: Boolean(data.coverageComplete),
+      hasData: Boolean(data.groups?.length),
+    };
+  }, [gmailEmail, outlookEmail, provider]);
 
   const syncMailbox = useCallback(async (): Promise<boolean> => {
     const response = await fetch("/api/google/sync", { method: "POST" });
@@ -418,8 +476,8 @@ export default function Home() {
         await runScan(range, after, before);
         return;
       }
-      const coverageComplete = await loadCachedRange(range, after, before);
-      if (!coverageComplete) {
+      const cached = await loadCachedRange(range, after, before);
+      if (!cached.coverageComplete) {
         await runScan(range, after, before);
         await loadCachedRange(range, after, before);
         return;
@@ -449,12 +507,25 @@ export default function Home() {
 
   useEffect(() => {
     if (provider !== "gmail" && provider !== "outlook") return;
-    const deferred = window.setTimeout(() => void refreshRange("90d"), 0);
+    const deferred = window.setTimeout(() => {
+      void (async () => {
+        if (restoreProviderSnapshot(provider)) return;
+        if (provider === "outlook") {
+          try {
+            const cached = await loadCachedRange("90d");
+            if (cached.hasData) return;
+          } catch {
+            // The normal refresh below will surface the connection error.
+          }
+        }
+        await refreshRange("90d");
+      })();
+    }, 0);
     return () => {
       window.clearTimeout(deferred);
       scanAbortRef.current?.abort();
     };
-  }, [provider, refreshRange]);
+  }, [loadCachedRange, provider, refreshRange, restoreProviderSnapshot]);
 
   useEffect(() => () => {
     if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
@@ -511,6 +582,7 @@ export default function Home() {
     setSelected([]);
     setGmailEmail("");
     setOutlookEmail("");
+    providerSnapshotsRef.current = {};
     setSenders(demoSenders);
     setView("cleanup");
   };
