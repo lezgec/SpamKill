@@ -241,6 +241,103 @@ function HistoryView({
   );
 }
 
+type AccountSettings = {
+  defaultRange: ScanRange;
+  autoAnalyze: boolean;
+  analyzeContent: boolean;
+  keepHistory: boolean;
+};
+
+const defaultAccountSettings: AccountSettings = {
+  defaultRange: "90d",
+  autoAnalyze: true,
+  analyzeContent: true,
+  keepHistory: true,
+};
+
+function SettingsView({
+  provider,
+  accountName,
+  accountEmail,
+  currentRange,
+  onApplyRange,
+  onRefresh,
+  onDisconnect,
+}: {
+  provider: Provider;
+  accountName: string;
+  accountEmail: string;
+  currentRange: ScanRange;
+  onApplyRange: (range: ScanRange) => void;
+  onRefresh: () => void;
+  onDisconnect: () => void;
+}) {
+  const storageKey = `spamkill:settings:${provider}:${accountEmail || "default"}`;
+  const [settings, setSettings] = useState<AccountSettings>(() => {
+    if (typeof window === "undefined") return defaultAccountSettings;
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      return stored ? { ...defaultAccountSettings, ...JSON.parse(stored) } : defaultAccountSettings;
+    } catch {
+      return defaultAccountSettings;
+    }
+  });
+  const [saved, setSaved] = useState(false);
+
+  const update = <K extends keyof AccountSettings>(key: K, value: AccountSettings[K]) => {
+    const next = { ...settings, [key]: value };
+    setSettings(next);
+    try { window.localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* opcional */ }
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1800);
+  };
+
+  return (
+    <main className="dashboard settings-page">
+      <header className="dash-header settings-heading">
+        <div>
+          <p className="breadcrumb">{accountName} / Configuración</p>
+          <h1>Configuración de tu cuenta.</h1>
+          <p>Estos ajustes se guardan únicamente para esta cuenta de {accountName}.</p>
+        </div>
+        {saved && <span className="settings-saved">✓ Guardado</span>}
+      </header>
+
+      <section className="settings-grid">
+        <article className="settings-card settings-account-card">
+          <div className="settings-card-title"><span className={`account-mark ${provider}`}>{provider === "gmail" ? "M" : "O"}</span><div><h2>Cuenta conectada</h2><p>{accountEmail || "Cuenta conectada"}</p></div></div>
+          <p className="settings-muted">SpamKill mantiene esta bandeja separada de tus otras cuentas.</p>
+          <button className="settings-outline-button" onClick={onDisconnect}>Desconectar cuenta</button>
+        </article>
+
+        <article className="settings-card">
+          <div className="settings-card-heading"><div><h2>Análisis</h2><p>Define cómo se revisan los mensajes de esta cuenta.</p></div><span className="settings-icon"><Icon name="spark" /></span></div>
+          <label className="settings-field"><span><strong>Periodo predeterminado</strong><small>Se usará al abrir Limpieza inteligente.</small></span><select value={settings.defaultRange} onChange={(event) => update("defaultRange", event.target.value as ScanRange)}>{(["all", "30d", "90d", "1y"] as ScanRange[]).map((range) => <option key={range} value={range}>{rangeLabels[range]}</option>)}</select></label>
+          <label className="settings-toggle"><span><strong>Analizar automáticamente al entrar</strong><small>Carga el índice guardado y busca cambios recientes.</small></span><input type="checkbox" checked={settings.autoAnalyze} onChange={(event) => update("autoAnalyze", event.target.checked)} /></label>
+          <label className="settings-toggle"><span><strong>Analizar contenido del mensaje</strong><small>Mejora la detección de publicidad, newsletters y phishing.</small></span><input type="checkbox" checked={settings.analyzeContent} onChange={(event) => update("analyzeContent", event.target.checked)} /></label>
+          <button className="settings-primary-button" onClick={() => onApplyRange(settings.defaultRange)}>Aplicar periodo ahora</button>
+        </article>
+
+        <article className="settings-card">
+          <div className="settings-card-heading"><div><h2>Clasificación y privacidad</h2><p>Tú decides qué hacer con cada resultado.</p></div><span className="settings-icon"><Icon name="shield" /></span></div>
+          <div className="settings-info-row"><span>Clasificaciones manuales</span><strong>Se guardan para {accountName}</strong></div>
+          <div className="settings-info-row"><span>Clasificaciones de la comunidad</span><strong>Solo se aplican con coincidencia suficiente</strong></div>
+          <label className="settings-toggle"><span><strong>Conservar historial de acciones</strong><small>Permite verificar desuscripciones y mensajes enviados a papelera.</small></span><input type="checkbox" checked={settings.keepHistory} onChange={(event) => update("keepHistory", event.target.checked)} /></label>
+          <p className="settings-muted">No almacenamos contraseñas. El acceso se realiza mediante OAuth y puedes revocarlo desde tu proveedor.</p>
+        </article>
+
+        <article className="settings-card settings-wide-card">
+          <div className="settings-card-heading"><div><h2>Sincronización</h2><p>Actualiza el índice local sin cambiar tus mensajes.</p></div><span className="settings-icon"><Icon name="history" /></span></div>
+          <div className="settings-sync-row"><div><strong>Último periodo activo</strong><small>{rangeLabels[currentRange]}</small></div><button className="settings-outline-button" onClick={onRefresh}>Actualizar ahora</button></div>
+          <p className="settings-muted">La sincronización respeta los límites de {accountName} y reutiliza el índice local cuando está disponible.</p>
+        </article>
+      </section>
+
+      <footer className="settings-footer"><a href="/privacy">Privacidad</a><a href="/terms">Términos del servicio</a></footer>
+    </main>
+  );
+}
+
 export default function Home() {
   const [provider, setProvider] = useState<Provider | null>(null);
   const [gmailEmail, setGmailEmail] = useState("");
@@ -250,7 +347,7 @@ export default function Home() {
   const [estimate, setEstimate] = useState(195);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"cleanup" | "history">("cleanup");
+  const [view, setView] = useState<"cleanup" | "history" | "settings">("cleanup");
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [filter, setFilter] = useState<Filter>("Todos");
@@ -977,7 +1074,7 @@ export default function Home() {
         <nav className="side-nav">
           <button className={view === "cleanup" ? "active" : ""} onClick={() => setView("cleanup")}><Icon name="spark" /> Limpieza inteligente <b>{senders.length}</b></button>
           <button className={view === "history" ? "active" : ""} onClick={() => loadHistory(false)}><Icon name="history" /> Historial</button>
-          <button><Icon name="settings" /> Configuración</button>
+          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Icon name="settings" /> Configuración</button>
         </nav>
         <div className="privacy-note">
           <span><Icon name="shield" /></span>
@@ -989,6 +1086,17 @@ export default function Home() {
 
       {view === "history" ? (
         <HistoryView records={history} loading={historyLoading} providerName={account.name} onRefresh={() => loadHistory(true)} />
+      ) : view === "settings" ? (
+        <SettingsView
+          key={`${provider}:${accountEmail}`}
+          provider={provider}
+          accountName={account.name}
+          accountEmail={accountEmail}
+          currentRange={scanRange}
+          onApplyRange={(range) => { setView("cleanup"); void refreshRange(range); }}
+          onRefresh={() => { setView("cleanup"); void refreshRange(scanRange); }}
+          onDisconnect={disconnect}
+        />
       ) : (
       <main className="dashboard">
         <header className="dash-header">
