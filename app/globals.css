@@ -141,6 +141,7 @@ input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--purple);
 .category-select.publicidad { color: #d86c25; background: #fff1e5; }
 .category-select.newsletters { color: #7650df; background: #f0ebff; }
 .category-select.notificaciones { color: #347fc8; background: #eaf4ff; }
+.category-select.phishing-spam { color: #b23a55; background: #ffe9ee; }
 .category-select:focus-visible { box-shadow: 0 0 0 2px #cfc5fa; }
 .message-count { font-size: 10px; }
 .last-date { color: #7e8797; }

@@ -9,6 +9,7 @@ export type GmailMessage = {
 };
 
 export type MessageCategory = "Publicidad" | "Newsletters" | "Notificaciones";
+export type ManualCategory = MessageCategory | "Phishing o Spam";
 export type ClassificationReason =
   | "transactional_terms"
   | "gmail_promotions"

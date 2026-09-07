@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Provider = "gmail" | "outlook" | "icloud";
-type Category = "Publicidad" | "Newsletters" | "Notificaciones";
+type Category = "Publicidad" | "Newsletters" | "Notificaciones" | "Phishing o Spam";
 type Filter = "Todos" | Category | "Dudosos" | "Seguros";
 type ScanRange = "all" | "30d" | "90d" | "1y" | "custom";
 type Sender = {
@@ -79,7 +79,7 @@ const rangeLabels: Record<ScanRange, string> = {
   "1y": "Último año",
   custom: "Fechas personalizadas",
 };
-const categoryOptions: Category[] = ["Publicidad", "Newsletters", "Notificaciones"];
+const categoryOptions: Category[] = ["Publicidad", "Newsletters", "Notificaciones", "Phishing o Spam"];
 
 function mailApiPath(provider: Provider | null): "google" | "outlook" {
   if (provider === "gmail") return "google";
@@ -1046,7 +1046,7 @@ export default function Home() {
         <section className="mail-panel">
           <div className="toolbar">
             <div className="filters">
-              {(["Todos", "Publicidad", "Newsletters", "Notificaciones", "Dudosos", "Seguros"] as Filter[]).map((item) => (
+              {(["Todos", "Publicidad", "Newsletters", "Notificaciones", "Phishing o Spam", "Dudosos", "Seguros"] as Filter[]).map((item) => (
                 <button key={item} onClick={() => setFilter(item)} className={filter === item ? "active" : ""}>
                   {item}{item === "Dudosos" ? ` (${senders.filter((sender) => sender.doubtful).length})` : item === "Seguros" ? ` (${senders.filter((sender) => sender.safe).length})` : ""}
                 </button>
@@ -1075,7 +1075,7 @@ export default function Home() {
                 <span className="category-control">
                   <select
                     aria-label={`Categoría de ${sender.name}`}
-                    className={`category-select ${sender.category.toLowerCase()}`}
+                    className={`category-select ${sender.category === "Phishing o Spam" ? "phishing-spam" : sender.category.toLowerCase()}`}
                     value={sender.category}
                     disabled={(provider !== "gmail" && provider !== "outlook") || preferenceBusy === sender.id}
                     onChange={(event) => void saveSenderPreference(sender, event.target.value as Category, false)}

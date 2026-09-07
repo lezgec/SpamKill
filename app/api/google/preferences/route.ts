@@ -1,17 +1,18 @@
 import { execute } from "@/db/mysql";
 import { authorizedGoogleSession, jsonWithSession } from "@/lib/google";
-import type { MessageCategory } from "@/lib/gmail-index";
+import type { ManualCategory } from "@/lib/gmail-index";
 
 type PreferencePayload = {
   senderEmail?: string;
-  category?: MessageCategory | null;
+  category?: ManualCategory | null;
   safe?: boolean;
 };
 
-const categories = new Set<MessageCategory>([
+const categories = new Set<ManualCategory>([
   "Publicidad",
   "Newsletters",
   "Notificaciones",
+  "Phishing o Spam",
 ]);
 
 export async function POST(request: Request) {

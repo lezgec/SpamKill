@@ -2,7 +2,7 @@ import { query } from "@/db/mysql";
 import type { RowDataPacket } from "mysql2/promise";
 import { authorizedOutlookSession, outlookAccountKey } from "@/lib/outlook";
 import { jsonWithSession, rangeStartTimestamp, type ScanRange } from "@/lib/google";
-import { classificationReasonText } from "@/lib/gmail-index";
+import { classificationReasonText, type ManualCategory } from "@/lib/gmail-index";
 
 type IndexRow = RowDataPacket & {
   id: string;
@@ -11,7 +11,7 @@ type IndexRow = RowDataPacket & {
   count: number | string;
   latestAt: number | string | null;
   unsub: number | string;
-  manualCategory: "Publicidad" | "Newsletters" | "Notificaciones" | null;
+  manualCategory: ManualCategory | null;
   isSafe: number | string;
   classificationReason: string;
   classificationConfidence: "high" | "medium" | "low";

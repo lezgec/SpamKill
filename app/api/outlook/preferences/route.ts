@@ -1,10 +1,11 @@
 import { execute } from "@/db/mysql";
 import { authorizedOutlookSession, outlookAccountKey } from "@/lib/outlook";
 import { jsonWithSession } from "@/lib/google";
+import type { ManualCategory } from "@/lib/gmail-index";
 
 type PreferencePayload = {
   senderEmail?: string;
-  category?: "Publicidad" | "Newsletters" | "Notificaciones" | null;
+  category?: ManualCategory | null;
   safe?: boolean;
 };
 

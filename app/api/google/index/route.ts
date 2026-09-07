@@ -11,6 +11,7 @@ import {
   classificationReasonText,
   type ClassificationConfidence,
   type ClassificationReason,
+  type ManualCategory,
   type MessageCategory,
 } from "@/lib/gmail-index";
 
@@ -34,7 +35,7 @@ type IndexRow = RowDataPacket & {
   latestAt: number | string | null;
   unsub: number | string;
   primaryMessageId: string;
-  manualCategory: MessageCategory | null;
+  manualCategory: ManualCategory | null;
   isSafe: number | string;
 };
 
