@@ -277,7 +277,9 @@ function SettingsView({
     if (typeof window === "undefined") return defaultAccountSettings;
     try {
       const stored = window.localStorage.getItem(storageKey);
-      return stored ? { ...defaultAccountSettings, ...JSON.parse(stored) } : defaultAccountSettings;
+      const parsed = stored ? JSON.parse(stored) as Partial<AccountSettings> : {};
+      const safeRange = parsed.defaultRange === "30d" || parsed.defaultRange === "90d" || parsed.defaultRange === "1y" ? parsed.defaultRange : defaultAccountSettings.defaultRange;
+      return { ...defaultAccountSettings, ...parsed, defaultRange: safeRange };
     } catch {
       return defaultAccountSettings;
     }
@@ -312,7 +314,7 @@ function SettingsView({
 
         <article className="settings-card">
           <div className="settings-card-heading"><div><h2>Análisis</h2><p>Define cómo se revisan los mensajes de esta cuenta.</p></div><span className="settings-icon"><Icon name="spark" /></span></div>
-          <label className="settings-field"><span><strong>Periodo predeterminado</strong><small>Se usará al abrir Limpieza inteligente.</small></span><select value={settings.defaultRange} onChange={(event) => update("defaultRange", event.target.value as ScanRange)}>{(["all", "30d", "90d", "1y"] as ScanRange[]).map((range) => <option key={range} value={range}>{rangeLabels[range]}</option>)}</select></label>
+          <label className="settings-field"><span><strong>Periodo predeterminado</strong><small>Se usará al abrir Limpieza inteligente.</small></span><select value={settings.defaultRange} onChange={(event) => update("defaultRange", event.target.value as ScanRange)}>{(["30d", "90d", "1y"] as ScanRange[]).map((range) => <option key={range} value={range}>{rangeLabels[range]}</option>)}</select></label>
           <label className="settings-toggle"><span><strong>Analizar automáticamente al entrar</strong><small>Carga el índice guardado y busca cambios recientes.</small></span><input type="checkbox" checked={settings.autoAnalyze} onChange={(event) => update("autoAnalyze", event.target.checked)} /></label>
           <label className="settings-toggle"><span><strong>Analizar contenido del mensaje</strong><small>Mejora la detección de publicidad, newsletters y phishing.</small></span><input type="checkbox" checked={settings.analyzeContent} onChange={(event) => update("analyzeContent", event.target.checked)} /></label>
           <button className="settings-primary-button" onClick={() => onApplyRange(settings.defaultRange)}>Aplicar periodo ahora</button>
@@ -1121,7 +1123,7 @@ export default function Home() {
             <strong>Elige qué parte de {account.name} quieres revisar</strong>
           </div>
           <div className="scope-options">
-            {(["all", "30d", "90d", "1y"] as ScanRange[]).map((range) => (
+            {(["30d", "90d", "1y"] as ScanRange[]).map((range) => (
               <button
                 key={range}
                 className={scanRange === range ? "active" : ""}
