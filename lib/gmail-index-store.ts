@@ -42,7 +42,6 @@ export async function replaceIndexedMessages(
   accountEmail: string,
   messages: GmailMessage[],
 ): Promise<number> {
-  await deleteIndexedMessageIds(accountEmail, messages.map((message) => message.id));
   const values = messages
     .map((message) => indexedMessageValues(accountEmail, message))
     .filter((value): value is NonNullable<typeof value> => Boolean(value));
@@ -73,7 +72,19 @@ export async function replaceIndexedMessages(
        (id, account_email, message_id, sender_email, sender_name, sender_domain,
         subject, snippet, category, classification_reason, classification_confidence,
         received_at, has_unsubscribe, mailbox_folder, indexed_at, trashed_at)
-       VALUES ${rowPlaceholders}`,
+       VALUES ${rowPlaceholders}
+       ON DUPLICATE KEY UPDATE
+         sender_email = VALUES(sender_email), sender_name = VALUES(sender_name),
+         sender_domain = VALUES(sender_domain), subject = VALUES(subject),
+         snippet = VALUES(snippet), category = VALUES(category),
+         classification_reason = VALUES(classification_reason),
+         classification_confidence = VALUES(classification_confidence),
+         received_at = VALUES(received_at), has_unsubscribe = VALUES(has_unsubscribe),
+         mailbox_folder = VALUES(mailbox_folder), indexed_at = VALUES(indexed_at),
+         trashed_at = CASE
+           WHEN VALUES(mailbox_folder) = 'Papelera' THEN COALESCE(trashed_at, VALUES(trashed_at))
+           ELSE trashed_at
+         END`,
       params,
     );
   }

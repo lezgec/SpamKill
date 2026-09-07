@@ -84,7 +84,7 @@ export async function GET(request: Request) {
             AND ranked.votes >= 2
             AND ranked.votes * 100 >= totals.total_votes * 60
        ) gc ON gc.sender_email = im.sender_email
-      WHERE im.account_email = ? AND im.trashed_at IS NULL AND im.received_at >= ?${dateClause}
+      WHERE im.account_email = ? AND im.trashed_at IS NULL AND im.mailbox_folder <> 'Papelera' AND im.received_at >= ?${dateClause}
       GROUP BY im.sender_email
       ORDER BY COUNT(im.id) DESC`,
     params,

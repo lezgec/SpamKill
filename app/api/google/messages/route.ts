@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   }
   const rawOffset = Number(requestUrl.searchParams.get("pageToken") ?? 0);
   const offset = Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
-  const where = `account_email = ? AND sender_email = ? AND trashed_at IS NULL AND received_at >= ?${dateClause}`;
+  const where = `account_email = ? AND sender_email = ? AND trashed_at IS NULL AND mailbox_folder <> 'Papelera' AND received_at >= ?${dateClause}`;
   const [messages, counts] = await Promise.all([
     query<MessageRow[]>(
       `SELECT message_id AS id, subject, snippet, sender_email AS \`from\`, received_at AS receivedAt, has_unsubscribe AS hasUnsubscribe

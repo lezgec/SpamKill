@@ -168,6 +168,7 @@ export async function GET(request: Request) {
 
   const grouped = new Map<string, SenderGroup>();
   for (const message of messages) {
+    if ((message.labelIds ?? []).includes("TRASH")) continue;
     const fromValue = gmailHeader(message, "From");
     if (!fromValue) continue;
     const sender = senderFrom(fromValue);
