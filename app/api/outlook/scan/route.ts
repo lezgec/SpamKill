@@ -56,7 +56,24 @@ function outlookTimestamp(value?: string): number {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function outlookMessageToGmail(message: GraphMessage): GmailMessage {
+type OutlookFolderIds = { inbox: string; spam: string; trash: string };
+
+async function outlookFolderIds(session: OutlookSession): Promise<OutlookFolderIds> {
+  const names = ["inbox", "junkemail", "deleteditems"] as const;
+  const values = await Promise.all(names.map(async (name) => {
+    const response = await outlookGraphFetch(session, `/me/mailFolders/${name}?$select=id`);
+    if (!response.ok) return "";
+    try {
+      const value = await response.json() as { id?: string };
+      return value.id ?? "";
+    } catch {
+      return "";
+    }
+  }));
+  return { inbox: values[0], spam: values[1], trash: values[2] };
+}
+
+function outlookMessageToGmail(message: GraphMessage, ids?: OutlookFolderIds): GmailMessage {
   const fromAddress = message.from?.emailAddress?.address ?? "";
   const fromName = message.from?.emailAddress?.name ?? fromAddress;
   const headers = [...(message.internetMessageHeaders ?? [])];
@@ -73,9 +90,9 @@ function outlookMessageToGmail(message: GraphMessage): GmailMessage {
     payload: { headers },
     labelIds: [
       ...(message.inferenceClassification === "other" ? ["CATEGORY_PROMOTIONS"] : []),
-      ...((message.parentFolderId ?? "").toLowerCase().includes("junk") || (message.parentFolderId ?? "").toLowerCase().includes("spam") ? ["SPAM"] : []),
-      ...((message.parentFolderId ?? "").toLowerCase().includes("trash") || (message.parentFolderId ?? "").toLowerCase().includes("deleted") ? ["TRASH"] : []),
-      ...((message.parentFolderId ?? "").toLowerCase().includes("inbox") ? ["INBOX"] : []),
+      ...(outlookFolder(message, ids) === "Spam" ? ["SPAM"] : []),
+      ...(outlookFolder(message, ids) === "Papelera" ? ["TRASH"] : []),
+      ...(outlookFolder(message, ids) === "Bandeja de entrada" ? ["INBOX"] : []),
     ],
   };
 }
@@ -99,8 +116,11 @@ function outlookFilter(range: ScanRange, after?: string | null, before?: string 
   return clauses.join(" and ");
 }
 
-function outlookFolder(message: GraphMessage): string {
+function outlookFolder(message: GraphMessage, ids?: OutlookFolderIds): string {
   const folder = (message.parentFolderId ?? "").toLowerCase();
+  if (ids?.spam && message.parentFolderId === ids.spam) return "Spam";
+  if (ids?.trash && message.parentFolderId === ids.trash) return "Papelera";
+  if (ids?.inbox && message.parentFolderId === ids.inbox) return "Bandeja de entrada";
   if (folder.includes("junk") || folder.includes("spam")) return "Spam";
   if (folder.includes("trash") || folder.includes("deleted")) return "Papelera";
   if (folder.includes("inbox")) return "Bandeja de entrada";
@@ -140,6 +160,7 @@ export async function GET(request: Request) {
   const range = (["all", "30d", "90d", "1y", "custom"].includes(rangeValue) ? rangeValue : "90d") as ScanRange;
   const nextLink = requestUrl.searchParams.get("pageToken");
   try {
+    const folderIds = await outlookFolderIds(session);
     const page = await listMessages(
       session,
       nextLink,
@@ -149,7 +170,7 @@ export async function GET(request: Request) {
     );
     if (!page) return jsonWithSession({ error: "La página de Outlook no es válida." }, 400, setCookie);
     const messages = (page.value ?? []).filter((message) => !message.isDraft);
-    const normalized = messages.map(outlookMessageToGmail);
+    const normalized = messages.map((message) => outlookMessageToGmail(message, folderIds));
     await replaceIndexedMessages(outlookAccountKey(session.email), normalized);
 
     const grouped = new Map<string, SenderGroup>();
@@ -167,7 +188,7 @@ export async function GET(request: Request) {
           existing.latestAt = receivedAt;
           existing.last = formatDate(message.internalDate);
           existing.primaryMessageId = message.id;
-          existing.folder = outlookFolder(message);
+          existing.folder = outlookFolder(message, folderIds);
           existing.category = classification.category;
           existing.detectedCategory = classification.category;
           existing.detectedReason = classificationReasonText(classification.reason);
@@ -198,7 +219,7 @@ export async function GET(request: Request) {
         unsub: Boolean(gmailHeader(message, "List-Unsubscribe")) || classification.reason === "unsubscribe_content",
         primaryMessageId: message.id,
         latestAt: receivedAt,
-        folder: outlookFolder(message),
+        folder: outlookFolder(message, folderIds),
       });
     }
 
