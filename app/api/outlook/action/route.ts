@@ -125,13 +125,18 @@ export async function POST(request: Request) {
         const oneClick = /List-Unsubscribe=One-Click/i.test(header(headers, "List-Unsubscribe-Post"));
         const dkimPassed = /dkim=pass/i.test(header(headers, "Authentication-Results"));
         if (oneClick && dkimPassed && unsubscribeUrl) {
-          const unsubscribeResponse = await fetch(unsubscribeUrl, {
-            method: "POST",
-            redirect: "manual",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: "List-Unsubscribe=One-Click",
-          });
-          if (unsubscribeResponse.ok) {
+          let unsubscribeResponse: Response | null = null;
+          try {
+            unsubscribeResponse = await fetch(unsubscribeUrl, {
+              method: "POST",
+              redirect: "manual",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: "List-Unsubscribe=One-Click",
+            });
+          } catch {
+            // Un enlace externo puede no estar disponible; se ofrece revisión manual.
+          }
+          if (unsubscribeResponse?.ok) {
             unsubscribed += 1;
             groupUnsubscribed = true;
           } else {

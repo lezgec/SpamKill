@@ -100,13 +100,18 @@ export async function POST(request: Request) {
         const manualUrl = extractManualUnsubscribeTarget(unsubscribeHeader)
           ?? extractContentUnsubscribeTarget(message.payload);
         if (oneClick && dkimPassed && unsubscribeUrl) {
-          const response = await fetch(unsubscribeUrl, {
-            method: "POST",
-            redirect: "manual",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: "List-Unsubscribe=One-Click",
-          });
-          if (response.ok) {
+          let response: Response | null = null;
+          try {
+            response = await fetch(unsubscribeUrl, {
+              method: "POST",
+              redirect: "manual",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: "List-Unsubscribe=One-Click",
+            });
+          } catch {
+            // Un dominio externo puede estar temporalmente caído; queda para revisión manual.
+          }
+          if (response?.ok) {
             unsubscribed += 1;
             groupUnsubscribed = true;
           } else {
