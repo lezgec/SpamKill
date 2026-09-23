@@ -21,6 +21,12 @@ npm install
 
 Completa `.env.local` con tus credenciales OAuth y estos valores de MySQL:
 
+Puedes partir de la plantilla `.env.example`:
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
 ```env
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
@@ -70,6 +76,20 @@ URLs públicas para la información de OAuth:
 
 - Términos del servicio: `https://spamkill.luiszamora.dev/terms`
 - Declaración de privacidad: `https://spamkill.luiszamora.dev/privacy`
+
+## Preparar el repositorio para compartirlo
+
+No subas `.env.local`, respaldos SQL, carpetas de datos de XAMPP ni tokens OAuth.
+El archivo `.env.example` contiene únicamente nombres de variables y valores de
+ejemplo. Los respaldos locales se excluyen mediante `.gitignore`.
+
+Antes de abrir un pull request o publicar el repositorio:
+
+```powershell
+npm ci
+npm run lint
+npm run build
+```
 
 ## Comandos útiles
 
